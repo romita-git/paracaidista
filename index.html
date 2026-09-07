@@ -114,9 +114,11 @@
     PLAYER_MAX_LIVES: 3,
     PLAYER_START_LIVES: 3,
 
-    FALL_SPEED_CLOSED: 6,        // "caída de pantalla" del jugador (efecto visual/tilt), no mueve Y real
     HORIZ_ACCEL_CLOSED: 900,     // px/seg^2 hacia targetX, control reducido (paracaídas cerrado)
     HORIZ_ACCEL_OPEN: 2000,      // control mejorado con paracaídas abierto
+    PARACHUTE_SPEED_FACTOR: 0.35, // paracaídas abierto frena la caída (velocidad relativa de los objetos)
+
+    EMOJI_FONT: '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif', // fuente con glifos de emoji a color (necesario en Safari/iOS)
 
     SPAWN_INTERVAL_BASE: 950,    // ms entre oleadas al inicio
     SPAWN_INTERVAL_MIN: 380,     // piso de dificultad
@@ -189,7 +191,9 @@
     return {
       type: type,
       x: x,
-      y: -CONFIG.OBJECT_SIZE,
+      // el paracaidista cae, así que los objetos (fijos en el aire) suben en pantalla
+      // relativos a él: nacen abajo y se mueven hacia arriba, no al revés
+      y: canvasHeight + CONFIG.OBJECT_SIZE,
       width: CONFIG.OBJECT_SIZE,
       height: CONFIG.OBJECT_SIZE,
       vy: currentObjectFallSpeed(),
@@ -302,7 +306,11 @@
 
   function currentObjectFallSpeed() {
     var t = Game && Game.elapsedTime ? Math.min(Game.elapsedTime / CONFIG.DIFFICULTY_RAMP_TIME, 1) : 0;
-    return lerp(CONFIG.OBJECT_FALL_SPEED_BASE, CONFIG.OBJECT_FALL_SPEED_MAX, easeOutQuad(t));
+    var speed = lerp(CONFIG.OBJECT_FALL_SPEED_BASE, CONFIG.OBJECT_FALL_SPEED_MAX, easeOutQuad(t));
+    // paracaídas abierto = el jugador frena su caída, así que los objetos
+    // se le acercan más despacio
+    if (Game && Game.player && Game.player.parachuteOpen) speed *= CONFIG.PARACHUTE_SPEED_FACTOR;
+    return speed;
   }
 
   function pickWaveSize() {
@@ -445,10 +453,10 @@
     var speed = currentObjectFallSpeed();
     for (var i = Game.entities.length - 1; i >= 0; i--) {
       var e = Game.entities[i];
-      var fall = e.type === 'muscleman' ? speed * 0.9 : speed;
-      e.y += fall * dt;
+      var rise = e.type === 'muscleman' ? speed * 0.9 : speed;
+      e.y -= rise * dt; // suben de abajo hacia arriba (ver createFallingObject)
       e.wobble += dt * 3;
-      if (e.y - e.height / 2 > canvasHeight) Game.entities.splice(i, 1);
+      if (e.y + e.height / 2 < 0) Game.entities.splice(i, 1);
     }
   }
 
@@ -571,7 +579,7 @@
 
     if (p.partyEffectTimer > 0) {
       ctx.save();
-      ctx.font = '28px sans-serif';
+      ctx.font = '28px ' + CONFIG.EMOJI_FONT;
       ctx.textAlign = 'center';
       ctx.fillText('🤩', p.x, p.y - p.height * 0.75);
       ctx.restore();
@@ -579,7 +587,7 @@
   }
 
   function renderEntities() {
-    ctx.font = CONFIG.OBJECT_SIZE + 'px sans-serif';
+    ctx.font = CONFIG.OBJECT_SIZE + 'px ' + CONFIG.EMOJI_FONT;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (var i = 0; i < Game.entities.length; i++) {
@@ -597,7 +605,7 @@
       var a = clamp(pt.life / pt.maxLife, 0, 1);
       ctx.save();
       ctx.globalAlpha = a;
-      ctx.font = '26px sans-serif';
+      ctx.font = '26px ' + CONFIG.EMOJI_FONT;
       ctx.fillText(pt.emoji, pt.x, pt.y);
       ctx.restore();
     }
