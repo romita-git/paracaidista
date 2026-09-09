@@ -131,6 +131,12 @@
     EDGE_MARGIN: 28,
     GAP_SAFETY_MARGIN: 26,       // margen extra sobre el ancho del jugador para el hueco
 
+    CLOUD_COUNT: 6,
+    CLOUD_MIN_SPEED: 18,         // px/seg, movimiento lento tipo parallax (no ligado a la dificultad)
+    CLOUD_MAX_SPEED: 40,
+    CLOUD_MIN_SCALE: 0.6,
+    CLOUD_MAX_SCALE: 1.5,
+
     PARTY_MODE_DURATION_MIN: 10,
     PARTY_MODE_DURATION_MAX: 15,
     PARTY_TRIGGER_CHANCE: 0.05,  // probabilidad de que una oleada incluya el ropero
@@ -205,6 +211,24 @@
     return { x: x, y: y, vy: -70, life: 0.9, maxLife: 0.9, emoji: emoji };
   }
 
+  function createCloud(y) {
+    return {
+      x: randRange(-40, canvasWidth + 40),
+      y: y,
+      scale: randRange(CONFIG.CLOUD_MIN_SCALE, CONFIG.CLOUD_MAX_SCALE),
+      speed: randRange(CONFIG.CLOUD_MIN_SPEED, CONFIG.CLOUD_MAX_SPEED),
+      opacity: randRange(0.5, 0.85)
+    };
+  }
+
+  function createInitialClouds() {
+    var clouds = [];
+    for (var i = 0; i < CONFIG.CLOUD_COUNT; i++) {
+      clouds.push(createCloud(randRange(0, canvasHeight)));
+    }
+    return clouds;
+  }
+
   function resetGame() {
     Game = {
       state: 'playing',           // 'playing' | 'gameover'
@@ -217,6 +241,7 @@
       spawnAccumulator: 0,
       entities: [],
       particles: [],
+      clouds: createInitialClouds(),
       bgHueTime: 0,
       player: createPlayer()
     };
@@ -469,6 +494,21 @@
     }
   }
 
+  function updateClouds(dt) {
+    var margin = 60;
+    for (var i = 0; i < Game.clouds.length; i++) {
+      var c = Game.clouds[i];
+      c.y -= c.speed * dt;
+      if (c.y + margin * c.scale < 0) {
+        c.y = canvasHeight + margin * c.scale;
+        c.x = randRange(-40, canvasWidth + 40);
+        c.scale = randRange(CONFIG.CLOUD_MIN_SCALE, CONFIG.CLOUD_MAX_SCALE);
+        c.speed = randRange(CONFIG.CLOUD_MIN_SPEED, CONFIG.CLOUD_MAX_SPEED);
+        c.opacity = randRange(0.5, 0.85);
+      }
+    }
+  }
+
   function updatePartyMode(dt) {
     if (Game.mode !== 'party') return;
     Game.modeTimer -= dt;
@@ -489,6 +529,7 @@
     updatePlayer(dt);
     updateEntities(dt);
     updateParticles(dt);
+    updateClouds(dt);
     updatePartyMode(dt);
     checkCollisions();
   }
@@ -500,6 +541,33 @@
   }
 
   // ==== 8. RENDER ====
+
+  // Los emojis a color (Apple Color Emoji, etc.) no se dibujan con fillText()
+  // en canvas cuando el contexto tiene una transformación aplicada (bug de
+  // WebKit/Safari en iOS; el escalado por devicePixelRatio de resizeCanvas
+  // cuenta como transformación). Por eso se pre-renderiza cada emoji una
+  // sola vez en un canvas auxiliar SIN transformar, y luego se pinta con
+  // drawImage(), que no tiene ese problema.
+  var emojiSpriteCache = {};
+  var EMOJI_SPRITE_SRC_SIZE = 128;
+  function getEmojiSprite(emoji) {
+    var cached = emojiSpriteCache[emoji];
+    if (cached) return cached;
+    var off = document.createElement('canvas');
+    off.width = EMOJI_SPRITE_SRC_SIZE;
+    off.height = EMOJI_SPRITE_SRC_SIZE;
+    var octx = off.getContext('2d');
+    octx.font = Math.round(EMOJI_SPRITE_SRC_SIZE * 0.82) + 'px ' + CONFIG.EMOJI_FONT;
+    octx.textAlign = 'center';
+    octx.textBaseline = 'middle';
+    octx.fillText(emoji, EMOJI_SPRITE_SRC_SIZE / 2, EMOJI_SPRITE_SRC_SIZE / 2 + EMOJI_SPRITE_SRC_SIZE * 0.04);
+    emojiSpriteCache[emoji] = off;
+    return off;
+  }
+  function drawEmoji(emoji, x, y, size) {
+    ctx.drawImage(getEmojiSprite(emoji), x - size / 2, y - size / 2, size, size);
+  }
+
   var skyGradientCache = null, skyGradientCacheH = 0;
   function getSkyGradient() {
     if (!skyGradientCache || skyGradientCacheH !== canvasHeight) {
@@ -522,6 +590,28 @@
       ctx.fillStyle = getSkyGradient();
     }
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  }
+
+  function drawCloud(c) {
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.scale(c.scale, c.scale);
+    ctx.globalAlpha = c.opacity;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 34, 20, 0, 0, Math.PI * 2);
+    ctx.ellipse(-26, 6, 22, 15, 0, 0, Math.PI * 2);
+    ctx.ellipse(28, 8, 24, 16, 0, 0, Math.PI * 2);
+    ctx.ellipse(-6, -14, 24, 18, 0, 0, Math.PI * 2);
+    ctx.ellipse(18, -10, 20, 15, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function renderClouds() {
+    for (var i = 0; i < Game.clouds.length; i++) {
+      drawCloud(Game.clouds[i]);
+    }
   }
 
   var playerSpriteImg = new Image();
@@ -578,41 +668,32 @@
     }
 
     if (p.partyEffectTimer > 0) {
-      ctx.save();
-      ctx.font = '28px ' + CONFIG.EMOJI_FONT;
-      ctx.textAlign = 'center';
-      ctx.fillText('🤩', p.x, p.y - p.height * 0.75);
-      ctx.restore();
+      drawEmoji('🤩', p.x, p.y - p.height * 0.75, 28);
     }
   }
 
   function renderEntities() {
-    ctx.font = CONFIG.OBJECT_SIZE + 'px ' + CONFIG.EMOJI_FONT;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
     for (var i = 0; i < Game.entities.length; i++) {
       var e = Game.entities[i];
       var wob = Math.sin(e.wobble) * 4;
-      ctx.fillText(ITEM_DEFS[e.type].emoji, e.x + wob, e.y);
+      drawEmoji(ITEM_DEFS[e.type].emoji, e.x + wob, e.y, CONFIG.OBJECT_SIZE);
     }
   }
 
   function renderParticles() {
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
     for (var i = 0; i < Game.particles.length; i++) {
       var pt = Game.particles[i];
       var a = clamp(pt.life / pt.maxLife, 0, 1);
       ctx.save();
       ctx.globalAlpha = a;
-      ctx.font = '26px ' + CONFIG.EMOJI_FONT;
-      ctx.fillText(pt.emoji, pt.x, pt.y);
+      drawEmoji(pt.emoji, pt.x, pt.y, 26);
       ctx.restore();
     }
   }
 
   function render() {
     renderBackground();
+    renderClouds();
     renderEntities();
     drawPlayer();
     renderParticles();
