@@ -440,6 +440,8 @@
     XYLO_HIT_SCORE: 35,
     XYLO_MISS_PENALTY: 45,
     XYLO_ICON_SIZE: 56,
+    XYLO_SHOCK_DURATION: 0.4, // cuánto dura la descarga eléctrica visual sobre Rufo
+    HEART_CLOUD_SPEED_FACTOR: 0.45, // en modo ropero los corazones de fondo van más lento que en modo normal
 
     // Objetivo: llegar al piso. Arranca a 10.000m y debería tardar ~2min
     // como mucho jugando bien (cerrando el paracaídas casi todo el tiempo).
@@ -482,7 +484,7 @@
     bottle:      { emoji: '🍾', kind: 'hazard', text: '¡Regalo de Demian!' },
     chard:       { emoji: '🥬', kind: 'hazard' },
     lawsuit:     { emoji: '📄', kind: 'hazard', text: 'Restricción de visita' },
-    judge:       { emoji: '🔨', kind: 'hazard', text: 'Citación del juez' },
+    judge:       { emoji: '🔨', kind: 'hazard', text: 'Citación del juez' }, // ícono propio, ver drawJudgeGavelIcon()
     punch:       { emoji: '🥊', kind: 'hazard', text: 'Denuncia por maltrato' },
     tire:        { emoji: '🛞', kind: 'hazard', text: '-$200 x huelga' },
 
@@ -498,6 +500,19 @@
     chickenman:  { emoji: '🐔', kind: 'chickenBonus', text: '¡Cocorocó!' },
     perimetral:  { emoji: '👮🏻', kind: 'setback', text: '¡Perimetral! +1000m' }
   };
+
+  // Título y bajada específicos según qué peligro te bajó la última vida
+  // (en vez de un "Game Over" siempre igual). Se guarda en resolveCollision()
+  // y se usa en triggerGameOver().
+  var GAME_OVER_HAZARD_MESSAGES = {
+    bottle:  { title: '¡TE HICISTE PAPILLA!', subtitle: 'El regalo de Demian te reventó' },
+    chard:   { title: '¡TE FUNDISTE!',        subtitle: 'Gastaste todo en acelga' },
+    lawsuit: { title: '¡TE RESTRINGIERON!',   subtitle: 'Restricción perimetral de por vida' },
+    judge:   { title: '¡PERDISTE EL JUICIO!', subtitle: 'Te tocó jueza feminista' },
+    punch:   { title: '¡TE DENUNCIARON!',     subtitle: 'Tu argumento es inchequeable' },
+    tire:    { title: '¡NO LLEGASTE!',        subtitle: 'Te aumentó la cuota alimentaria' }
+  };
+  var lastHazardType = null;
 
   var HAZARD_TYPES = ['bottle', 'chard', 'lawsuit', 'judge', 'punch', 'tire'];
   var HEAL_TYPES = ['chocolate', 'vasectomy', 'savings'];
@@ -645,7 +660,7 @@
       dash: { state: 'idle', startAltitude: 0, startTime: 0, warningTimer: 0, deathTimer: 0 },
       xyloUsed: false,
       xyloVisible: false,
-      xylo: { state: 'idle', timer: 0, litKeyIndex: 0, wandX: 0, playerPhase: 0, bolts: [] },
+      xylo: { state: 'idle', timer: 0, litKeyIndex: 0, wandX: 0, playerPhase: 0, bolts: [], shockTimer: 0 },
       player: createPlayer()
     };
     input.isDashHold = false;
@@ -796,9 +811,15 @@
   // Escala de Do a Do (una octava), de grave a agudo según la tecla (índice
   // 0 = la más a la izquierda = la más grave), como un xilófono de verdad.
   var XYLO_NOTES = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25];
+  // Timbre metálico (no un tono musical "puro"): la fundamental una octava
+  // arriba de la nota de la escala, más dos parciales agudos e inarmónicos
+  // (relación no entera, como en una campana) con decaimiento rápido —
+  // así se escucha a metal percutido y no grave/opaco como un triangle solo.
   function sfxXyloHit(keyIndex) {
-    var freq = XYLO_NOTES[keyIndex % XYLO_NOTES.length];
-    playTone(freq, 0.16, 'triangle', 0.22);
+    var freq = XYLO_NOTES[keyIndex % XYLO_NOTES.length] * 2;
+    playTone(freq, 0.14, 'square', 0.14);
+    playTone(freq * 2.41, 0.09, 'sine', 0.11, 0.004);
+    playTone(freq * 3.52, 0.07, 'sine', 0.07, 0.008);
   }
   // Nota incorrecta: buzz corto y sordo.
   function sfxXyloMiss() {
@@ -1490,6 +1511,7 @@
           Game.lives--;
           Game.score = Math.max(0, Game.score - CONFIG.HAZARD_SCORE_PENALTY);
           Game.player.invulnerableTimer = CONFIG.INVULNERABLE_TIME;
+          lastHazardType = item.type;
           sfxHazard();
           if (item.type === 'chard') {
             var spent = randInt(180, 1450);
@@ -1573,6 +1595,7 @@
     p.tilt = clamp(p.vx * 0.0006, -0.35, 0.35);
     if (p.invulnerableTimer > 0) p.invulnerableTimer -= dt;
     if (p.partyEffectTimer > 0) p.partyEffectTimer -= dt;
+    if (Game.xylo.shockTimer > 0) Game.xylo.shockTimer -= dt;
 
     if (p.parachuteOpen) {
       // Con el paracaídas abierto el sprite queda quieto en la pose de
@@ -1675,9 +1698,13 @@
     // hacia abajo (en vez del drift lento normal hacia arriba): refuerza
     // la sensación de que a Rufo lo mandaron para arriba.
     var perimetralBoost = Game.perimetralEffectTimer > 0 ? CONFIG.PERIMETRAL_CLOUD_BOOST : 0;
+    // En modo ropero las nubes son corazones (ver drawCloud); van más lento
+    // que en modo normal para que no compitan visualmente con los objetos
+    // que suben (bonus del ropero), que son mucho más rápidos.
+    var speedFactor = Game.mode === 'party' ? CONFIG.HEART_CLOUD_SPEED_FACTOR : 1;
     for (var i = 0; i < Game.clouds.length; i++) {
       var c = Game.clouds[i];
-      c.y += (perimetralBoost - c.speed) * dt;
+      c.y += (perimetralBoost - c.speed * speedFactor) * dt;
       if (c.y + margin * c.scale < 0) {
         c.y = canvasHeight + margin * c.scale;
         c.x = randRange(-40, canvasWidth + 40);
@@ -1903,8 +1930,17 @@
     );
 
     for (var i = x.bolts.length - 1; i >= 0; i--) {
-      x.bolts[i].life -= dt;
-      if (x.bolts[i].life <= 0) x.bolts.splice(i, 1);
+      var bolt = x.bolts[i];
+      bolt.life -= dt;
+      for (var pj = bolt.particles.length - 1; pj >= 0; pj--) {
+        var pt = bolt.particles[pj];
+        pt.vy += 70 * dt; // gravedad leve, para que las chispas caigan un poco
+        pt.x += pt.vx * dt;
+        pt.y += pt.vy * dt;
+        pt.life -= dt;
+        if (pt.life <= 0) bolt.particles.splice(pj, 1);
+      }
+      if (bolt.life <= 0 && bolt.particles.length === 0) x.bolts.splice(i, 1);
     }
 
     x.timer -= dt;
@@ -1942,11 +1978,31 @@
       Game.score = Math.max(0, Game.score - CONFIG.XYLO_MISS_PENALTY);
       sfxXyloMiss();
     }
+    var boltLife = 0.3;
+    var particleCount = correct ? 9 : 15;
+    var particles = [];
+    for (var pi = 0; pi < particleCount; pi++) {
+      var along = Math.random();
+      var baseX = keyCenterX + (Game.player.x - keyCenterX) * along;
+      var baseY = keyY + (Game.player.y - keyY) * along;
+      var ang = Math.random() * Math.PI * 2;
+      var spd = randRange(30, correct ? 90 : 150);
+      var pLife = randRange(0.2, 0.45);
+      particles.push({
+        x: baseX, y: baseY,
+        vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd - 20,
+        size: randRange(2, correct ? 4 : 6),
+        life: pLife, maxLife: pLife
+      });
+    }
     x.bolts.push({
       x: keyCenterX, y: keyY,
       px: Game.player.x, py: Game.player.y,
-      correct: correct, life: 0.28, maxLife: 0.28
+      correct: correct, life: boltLife, maxLife: boltLife,
+      seed: Math.random() * Math.PI * 2,
+      particles: particles
     });
+    x.shockTimer = CONFIG.XYLO_SHOCK_DURATION * (correct ? 0.7 : 1);
     var next = idx;
     if (CONFIG.XYLO_KEY_COUNT > 1) {
       while (next === idx) next = randInt(0, CONFIG.XYLO_KEY_COUNT - 1);
@@ -1978,9 +2034,11 @@
     Game.state = 'gameover';
     applyLifeRemainingBonus();
     sfxGameOver();
-    overlayTitleEl.textContent = 'Game Over';
+    var msg = GAME_OVER_HAZARD_MESSAGES[lastHazardType];
+    overlayTitleEl.textContent = msg ? msg.title : 'Game Over';
     var altRemaining = Math.max(0, Math.round(Game.altitude));
-    finalScoreTextEl.textContent = 'Te quedaste a ' + altRemaining.toLocaleString('es-AR') + ' m del piso · Score: ' + Math.floor(Game.score);
+    var scoreLine = 'Te quedaste a ' + altRemaining.toLocaleString('es-AR') + ' m del piso · Score: ' + Math.floor(Game.score);
+    finalScoreTextEl.textContent = msg ? (msg.subtitle + ' · ' + scoreLine) : scoreLine;
     overlayGameOverEl.classList.add('visible');
     resetFeedbackBox();
     setupLeaderboardForResult(Game.score, 'gameover');
@@ -2106,10 +2164,54 @@
     return cloudSpriteCache;
   }
 
+  // En modo fiesta las nubes pasan a ser corazones (mismo estilo de
+  // pixel art en bloques, mismo cache-una-vez-y-reescalar que la nube).
+  var HEART_GRID = [
+    '0110001100',
+    '1111011110',
+    '1111111111',
+    '1111111111',
+    '1111111111',
+    '0111111110',
+    '0011111100',
+    '0001111000',
+    '0000110000'
+  ];
+  var HEART_SPRITE_W = CLOUD_CELL * HEART_GRID[0].length;
+  var HEART_SPRITE_H = CLOUD_CELL * HEART_GRID.length;
+  var heartSpriteCache = null;
+  function getHeartSprite() {
+    if (heartSpriteCache) return heartSpriteCache;
+    var off = document.createElement('canvas');
+    off.width = HEART_SPRITE_W;
+    off.height = HEART_SPRITE_H;
+    var octx = off.getContext('2d');
+    octx.fillStyle = '#ff5c8a';
+    for (var row = 0; row < HEART_GRID.length; row++) {
+      for (var col = 0; col < HEART_GRID[row].length; col++) {
+        if (HEART_GRID[row][col] === '1') {
+          octx.fillRect(col * CLOUD_CELL, row * CLOUD_CELL, CLOUD_CELL, CLOUD_CELL);
+        }
+      }
+    }
+    var lastRow = HEART_GRID.length - 1;
+    octx.fillStyle = 'rgba(140,20,60,0.45)';
+    for (var col2 = 0; col2 < HEART_GRID[lastRow].length; col2++) {
+      if (HEART_GRID[lastRow][col2] === '1') {
+        octx.fillRect(col2 * CLOUD_CELL, HEART_SPRITE_H - 2, CLOUD_CELL, 2);
+      }
+    }
+    heartSpriteCache = off;
+    return heartSpriteCache;
+  }
+
   function drawCloud(c) {
-    var sprite = getCloudSprite();
-    var w = CLOUD_SPRITE_W * 2 * c.scale;
-    var h = CLOUD_SPRITE_H * 2 * c.scale;
+    var partyMode = Game.mode === 'party';
+    var sprite = partyMode ? getHeartSprite() : getCloudSprite();
+    var spriteW = partyMode ? HEART_SPRITE_W : CLOUD_SPRITE_W;
+    var spriteH = partyMode ? HEART_SPRITE_H : CLOUD_SPRITE_H;
+    var w = spriteW * 2 * c.scale;
+    var h = spriteH * 2 * c.scale;
     ctx.save();
     ctx.globalAlpha = c.opacity;
     ctx.imageSmoothingEnabled = false;
@@ -2198,6 +2300,85 @@
     ctx.restore();
   }
 
+  // Martillo de juez (mazo de madera con su base de sonido), dibujado a
+  // mano: ni el emoji genérico de martillo ni el del juez con toga (una
+  // secuencia compuesta que no se veía completa en varios dispositivos)
+  // tienen la base, así que se arma desde cero.
+  // Martillo de juez con base (mazo apoyado sobre el taco de sonido),
+  // hecho a mano en canvas: cabeza bicolor (madera oscura + franja dorada),
+  // mango claro y unas rayitas de "golpe" al costado, sin usar ningún emoji.
+  function drawJudgeGavelIcon(x, y, size) {
+    ctx.save();
+    ctx.translate(x, y);
+
+    // Taco / base de sonido
+    var baseW = size * 0.7, baseH = size * 0.22, baseY = size * 0.32;
+    ctx.fillStyle = '#8a5a34';
+    roundRectPath(-baseW / 2, baseY, baseW, baseH, baseH * 0.45);
+    ctx.fill();
+    ctx.strokeStyle = '#4a2c14';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    roundRectPath(-baseW / 2 + baseW * 0.08, baseY + baseH * 0.16, baseW * 0.84, baseH * 0.32, baseH * 0.16);
+    ctx.fill();
+
+    // Rayitas de impacto, como en el ícono de referencia
+    ctx.strokeStyle = 'rgba(255,90,120,0.85)';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    var impactX = -size * 0.34, impactY = -size * 0.02;
+    var angles = [-2.5, -2.1, -1.7, -1.3, -0.95];
+    for (var i = 0; i < angles.length; i++) {
+      var a = angles[i];
+      var len = size * (0.12 + (i % 2) * 0.05);
+      ctx.beginPath();
+      ctx.moveTo(impactX + Math.cos(a) * size * 0.08, impactY + Math.sin(a) * size * 0.08);
+      ctx.lineTo(impactX + Math.cos(a) * (size * 0.08 + len), impactY + Math.sin(a) * (size * 0.08 + len));
+      ctx.stroke();
+    }
+
+    // Cabeza + mango, apoyados en diagonal sobre la base (mango hacia
+    // arriba-derecha, como en la imagen de referencia)
+    ctx.save();
+    ctx.rotate(-0.5);
+
+    // mango
+    ctx.strokeStyle = '#b97a4a';
+    ctx.lineWidth = size * 0.11;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.02, size * 0.06);
+    ctx.lineTo(size * 0.52, size * 0.34);
+    ctx.stroke();
+
+    // cabeza del mazo: cuerpo oscuro con franja dorada al medio y tapas
+    // redondeadas más oscuras en las puntas
+    var headW = size * 0.48, headH = size * 0.3;
+    var headX = -headW / 2 - size * 0.03, headY = -headH / 2 - size * 0.08;
+    ctx.fillStyle = '#6b3a2a';
+    roundRectPath(headX, headY, headW, headH, headH * 0.4);
+    ctx.fill();
+    ctx.strokeStyle = '#3d1f16';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = '#f0a83c';
+    ctx.fillRect(headX + headW * 0.36, headY, headW * 0.28, headH);
+    ctx.strokeStyle = '#b97a20';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(headX + headW * 0.36, headY, headW * 0.28, headH);
+
+    ctx.fillStyle = '#4a2419';
+    roundRectPath(headX - headW * 0.07, headY - headH * 0.1, headW * 0.18, headH * 1.2, headH * 0.55);
+    ctx.fill();
+    roundRectPath(headX + headW * 0.89, headY - headH * 0.1, headW * 0.18, headH * 1.2, headH * 0.55);
+    ctx.fill();
+
+    ctx.restore();
+    ctx.restore();
+  }
+
   var PARACHUTE_PANEL_COLORS = ['#e63946', '#f4f1de', '#e63946', '#f4f1de', '#e63946', '#f4f1de'];
 
   function drawParachute(p) {
@@ -2237,6 +2418,30 @@
       ctx.lineTo(anchor.x, anchor.y);
       ctx.stroke();
     }
+  }
+
+  // Tiñe un sprite ya cargado de un color sólido respetando su forma real
+  // (no un cuadrado): hace falta dibujarlo primero en un canvas auxiliar
+  // aislado, porque un "source-atop" directo sobre el canvas principal
+  // tiñe el rectángulo entero (el cielo de fondo ya es opaco ahí).
+  var playerTintCanvas = document.createElement('canvas');
+  var playerTintCtx = playerTintCanvas.getContext('2d');
+  function drawTintedSprite(img, w, h, color, alpha) {
+    if (playerTintCanvas.width !== w || playerTintCanvas.height !== h) {
+      playerTintCanvas.width = w;
+      playerTintCanvas.height = h;
+    }
+    playerTintCtx.clearRect(0, 0, w, h);
+    playerTintCtx.imageSmoothingEnabled = false;
+    playerTintCtx.drawImage(img, 0, 0, w, h);
+    playerTintCtx.globalCompositeOperation = 'source-atop';
+    playerTintCtx.globalAlpha = alpha;
+    playerTintCtx.fillStyle = color;
+    playerTintCtx.fillRect(0, 0, w, h);
+    playerTintCtx.globalCompositeOperation = 'source-over';
+    playerTintCtx.globalAlpha = 1;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(playerTintCanvas, -w / 2, -h / 2, w, h);
   }
 
   function drawPlayerPlaceholder(p) {
@@ -2299,11 +2504,21 @@
       ctx.globalAlpha = 0.4;
     }
     ctx.imageSmoothingEnabled = false; // mantiene el look pixel art nítido al escalar
+    var shockActive = Game.xylo.shockTimer > 0;
+    var shockAlpha = shockActive ? 0.6 * (0.5 + 0.5 * Math.sin(Game.elapsedTime * 55)) : 0;
     if (dashing && dashSpriteImg.loaded) {
-      ctx.drawImage(dashSpriteImg, -CONFIG.DASH_SPRITE_WIDTH / 2, -CONFIG.DASH_SPRITE_HEIGHT / 2, CONFIG.DASH_SPRITE_WIDTH, CONFIG.DASH_SPRITE_HEIGHT);
+      if (shockActive) {
+        drawTintedSprite(dashSpriteImg, CONFIG.DASH_SPRITE_WIDTH, CONFIG.DASH_SPRITE_HEIGHT, '#8ef1ff', shockAlpha);
+      } else {
+        ctx.drawImage(dashSpriteImg, -CONFIG.DASH_SPRITE_WIDTH / 2, -CONFIG.DASH_SPRITE_HEIGHT / 2, CONFIG.DASH_SPRITE_WIDTH, CONFIG.DASH_SPRITE_HEIGHT);
+      }
     } else if (allPlayerFramesLoaded()) {
       var frame = playerSpriteImgs[p.animFrame % playerSpriteImgs.length];
-      ctx.drawImage(frame, -p.width / 2, -p.height / 2, p.width, p.height);
+      if (shockActive) {
+        drawTintedSprite(frame, p.width, p.height, '#8ef1ff', shockAlpha);
+      } else {
+        ctx.drawImage(frame, -p.width / 2, -p.height / 2, p.width, p.height);
+      }
     } else {
       drawPlayerPlaceholder(p);
     }
@@ -2316,9 +2531,41 @@
       ctx.restore();
     }
 
+    if (Game.xylo.shockTimer > 0) {
+      drawElectricShockHalo(p.x, py, Math.max(p.width, p.height));
+    }
+
     if (p.partyEffectTimer > 0) {
       drawEmoji('🤩', p.x, py - p.height * 0.75, 28);
     }
+  }
+
+  // Halo de descarga eléctrica sobre Rufo cuando le pega el rayo del
+  // xilófono: chispazos quebrados que salen disparados en varias
+  // direcciones, con parpadeo, imitando el mismo sprite del rayo pero
+  // en miniatura y alrededor del personaje.
+  function drawElectricShockHalo(x, y, size) {
+    var flicker = 0.55 + 0.45 * Math.sin(Game.elapsedTime * 48);
+    ctx.save();
+    ctx.globalAlpha = flicker;
+    ctx.strokeStyle = '#aef1ff';
+    ctx.shadowColor = '#7fe8ff';
+    ctx.shadowBlur = 14;
+    ctx.lineWidth = 2;
+    var arms = 6;
+    for (var i = 0; i < arms; i++) {
+      var a = (Math.PI * 2 / arms) * i + Game.elapsedTime * 5;
+      var r0 = size * 0.35;
+      var r1 = size * (0.7 + Math.random() * 0.35);
+      var midA = a + (Math.random() - 0.5) * 0.7;
+      var midR = (r0 + r1) * 0.55;
+      ctx.beginPath();
+      ctx.moveTo(x + Math.cos(a) * r0, y + Math.sin(a) * r0);
+      ctx.lineTo(x + Math.cos(midA) * midR, y + Math.sin(midA) * midR);
+      ctx.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   function drawHalo(x, y, size) {
@@ -2517,60 +2764,76 @@
     var color = bolt.correct ? '#7fe8ff' : '#ff5566';
     var rgb = hexToRgbComponents(color);
 
-    ctx.save();
-    ctx.globalAlpha = t;
-    drawImpactHalo(bolt.x, bolt.y, bolt.correct ? 30 : 42, rgb);
-    if (!bolt.correct) drawImpactHalo(bolt.px, bolt.py, 56, rgb);
+    if (t > 0) {
+      ctx.save();
+      ctx.globalAlpha = t;
+      drawImpactHalo(bolt.x, bolt.y, bolt.correct ? 30 : 42, rgb);
+      if (!bolt.correct) drawImpactHalo(bolt.px, bolt.py, 56, rgb);
 
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 18;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = bolt.correct ? 4 : 6;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    var segments = 7;
-    for (var i = 0; i <= segments; i++) {
-      var f = i / segments;
-      var jitter = (Math.random() - 0.5) * 16 * Math.sin(f * Math.PI);
-      var px = bolt.x + (bolt.px - bolt.x) * f + jitter;
-      var py = bolt.y + (bolt.py - bolt.y) * f;
-      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 18;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = bolt.correct ? 4 : 6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      var segments = 12;
+      var waveAmp = bolt.correct ? 20 : 34;
+      for (var i = 0; i <= segments; i++) {
+        var f = i / segments;
+        var envelope = Math.sin(f * Math.PI);
+        var wave = Math.sin(f * Math.PI * 3.4 + bolt.seed) * waveAmp * envelope;
+        var jitter = (Math.random() - 0.5) * 6 * envelope;
+        var px = bolt.x + (bolt.px - bolt.x) * f + wave + jitter;
+        var py = bolt.y + (bolt.py - bolt.y) * f;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
     }
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+
+    ctx.save();
+    for (var p = 0; p < bolt.particles.length; p++) {
+      var pt = bolt.particles[p];
+      var pa = clamp(pt.life / pt.maxLife, 0, 1);
+      ctx.globalAlpha = pa;
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, Math.max(0.5, pt.size * pa), 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
   // Varita dibujada a mano (no todos los dispositivos tienen el emoji 🪄):
-  // un palito con una estrellita brillante en la punta.
+  // un palito recto con una bolita de madera en la punta, apoyada justo
+  // sobre la tecla (el origen (0,0) es el centro de la bolita).
   function drawWandIcon(x, y, size) {
     ctx.save();
     ctx.translate(x, y);
     ctx.strokeStyle = '#7a5230';
-    ctx.lineWidth = size * 0.12;
+    ctx.lineWidth = size * 0.13;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(-size * 0.35, size * 0.35);
-    ctx.lineTo(size * 0.3, -size * 0.3);
+    ctx.moveTo(0, -size * 0.05);
+    ctx.lineTo(size * 0.14, -size * 0.95);
     ctx.stroke();
-    var tipX = size * 0.38, tipY = -size * 0.38;
-    var spikes = 4, outerR = size * 0.22, innerR = size * 0.09;
-    ctx.fillStyle = '#ffe066';
-    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-    ctx.lineWidth = 1;
+
+    var r = size * 0.24;
+    var grad = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.15, 0, 0, r);
+    grad.addColorStop(0, '#d9a066');
+    grad.addColorStop(1, '#8a5a34');
+    ctx.fillStyle = grad;
     ctx.beginPath();
-    for (var i = 0; i < spikes * 2; i++) {
-      var r = i % 2 === 0 ? outerR : innerR;
-      var a = (Math.PI / spikes) * i - Math.PI / 2;
-      var px = tipX + Math.cos(a) * r;
-      var py = tipY + Math.sin(a) * r;
-      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-    }
-    ctx.closePath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = '#5c3a1f';
+    ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.restore();
   }
@@ -2617,23 +2880,43 @@
     var slotW = canvasWidth / keyCount;
     var barW = slotW * 0.62;
     var keyH = xyloKeyHeight();
-    var baseY = canvasHeight - keyH;
     var palette = ['#e63946', '#f4845f', '#f1c40f', '#2ecc71', '#17bebb', '#4d96ff', '#8e5cff', '#ff5cad'];
     var noteLabels = ['C', 'D', 'E', 'F', 'G', 'A', 'B', 'C'];
 
-    ctx.save();
-    // dos rieles de madera por detrás, donde "se apoyan" las teclas (fijos,
-    // en base al tamaño de referencia, no al de cada tecla)
+    // Dos rieles de madera por detrás, inclinados siguiendo el achicamiento
+    // de las teclas (antes quedaban rectos a una altura fija y las teclas
+    // más chicas terminaban sin tocarlos). Como el achicamiento es lineal
+    // según el índice, el punto de apoyo de cada tecla cae exactamente
+    // sobre la recta que une el de la primera y el de la última.
+    function railEndpoints(fraction) {
+      var i0 = 0, i1 = keyCount - 1;
+      var cx0 = slotW * i0 + slotW / 2, cx1 = slotW * i1 + slotW / 2;
+      var kh0 = keyH * xyloKeySizeFactor(i0), kh1 = keyH * xyloKeySizeFactor(i1);
+      var y0 = (canvasHeight - kh0) + kh0 * fraction;
+      var y1 = (canvasHeight - kh1) + kh1 * fraction;
+      var slope = (y1 - y0) / (cx1 - cx0);
+      return { y0: y0 - slope * cx0, y1: y0 + slope * (canvasWidth - cx0) };
+    }
+    function drawWoodRail(fraction, thickness) {
+      var p = railEndpoints(fraction);
+      ctx.save();
+      ctx.strokeStyle = '#8a5a34';
+      ctx.lineWidth = thickness;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(0, p.y0);
+      ctx.lineTo(canvasWidth, p.y1);
+      ctx.stroke();
+      ctx.strokeStyle = '#5c3a1f';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    }
     var railH = 9;
-    ctx.fillStyle = '#8a5a34';
-    ctx.strokeStyle = '#5c3a1f';
-    ctx.lineWidth = 2;
-    var rail1Y = baseY + keyH * 0.26;
-    var rail2Y = baseY + keyH * 0.74;
-    ctx.fillRect(0, rail1Y - railH / 2, canvasWidth, railH);
-    ctx.strokeRect(0, rail1Y - railH / 2, canvasWidth, railH);
-    ctx.fillRect(0, rail2Y - railH / 2, canvasWidth, railH);
-    ctx.strokeRect(0, rail2Y - railH / 2, canvasWidth, railH);
+    drawWoodRail(0.26, railH);
+    drawWoodRail(0.74, railH);
+
+    ctx.save();
 
     for (var i = 0; i < keyCount; i++) {
       var sizeFactor = xyloKeySizeFactor(i);
@@ -2680,7 +2963,12 @@
     ctx.restore();
 
     for (var b = 0; b < x.bolts.length; b++) drawXyloBolt(x.bolts[b]);
-    drawWandIcon(x.wandX, baseY - 16, 38);
+
+    // La bolita de la varita apoya justo sobre la tecla que está debajo del
+    // dedo (cada tecla tiene su propia altura por el achicamiento cónico).
+    var wandIdx = xyloKeyIndexAt(x.wandX);
+    var wandKeyTopY = canvasHeight - keyH * xyloKeySizeFactor(wandIdx);
+    drawWandIcon(x.wandX, wandKeyTopY, 38);
   }
 
   function renderEntities() {
@@ -2694,6 +2982,8 @@
       if (e.type === 'wardrobe') {
         drawWardrobeHalo(e.x + wob, e.y, CONFIG.OBJECT_SIZE);
         drawWardrobeIcon(e.x + wob, e.y, CONFIG.OBJECT_SIZE);
+      } else if (e.type === 'judge') {
+        drawJudgeGavelIcon(e.x + wob, e.y, CONFIG.OBJECT_SIZE);
       } else {
         drawEmoji(def.emoji, e.x + wob, e.y, CONFIG.OBJECT_SIZE);
       }
