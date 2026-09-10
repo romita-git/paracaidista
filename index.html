@@ -85,6 +85,29 @@
     box-shadow: 4px 4px 0 #000;
   }
   .overlay button:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 #000; }
+  #startSprite {
+    width: 220px;
+    height: auto;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+  }
+  #startTitle {
+    font-size: 26px;
+    letter-spacing: 2px;
+    line-height: 1.3;
+    animation: titleColorCycle 3s linear infinite;
+    text-shadow: 3px 3px 0 #000, 0 0 14px currentColor;
+  }
+  @keyframes titleColorCycle {
+    0%   { color: #ff2d75; }
+    16%  { color: #ff9d2d; }
+    33%  { color: #ffe62d; }
+    50%  { color: #2dff6a; }
+    66%  { color: #2dd4ff; }
+    83%  { color: #b02dff; }
+    100% { color: #ff2d75; }
+  }
   #startHint {
     position: fixed;
     bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
@@ -115,6 +138,12 @@
   <h1 id="overlayTitle">Game Over</h1>
   <p id="finalScoreText"></p>
   <button id="btnRetry">Reintentar</button>
+</div>
+
+<div id="overlayStart" class="overlay visible">
+  <h1 id="startTitle">RUFFUS ADVENTURES</h1>
+  <img id="startSprite" alt="Paracaidista">
+  <button id="btnStart">Saltar</button>
 </div>
 
 <script>
@@ -182,7 +211,9 @@
     DESCENT_RATE_OPEN: 45,       // m/s con paracaídas abierto (más lento pero más seguro)
     PERIMETRAL_SETBACK_M: 1000,  // metros que te hace retroceder el perimetral
 
-    DIPLOMA_DURATION: 4.5,               // segundos que el título académico queda en pantalla
+    DIPLOMA_FALL_SPEED: 280,             // px/seg cayendo (rápido, imposible de seguir)
+    DIPLOMA_BURN_AFTER: 1.3,             // segundos cayendo antes de prenderse fuego
+    DIPLOMA_BURN_DURATION: 0.5,          // segundos ardiendo antes del "¡Plop!!"
     DIPLOMA_TRIGGER_CHANCE_PER_SEC: 0.018 // probabilidad por segundo de que aparezca
   };
 
@@ -199,11 +230,11 @@
 
     chocolate:   { emoji: '🍫', kind: 'heal', text: '¡Milka!' },
     vasectomy:   { emoji: '✂️', kind: 'heal', text: '¡Vasectomía! +$300' },
-    savings:     { emoji: '💰', kind: 'heal', text: '¡Ahorraste 5 palos!' },
+    savings:     { emoji: '💰', kind: 'heal', text: '5p ahorrados' },
 
     wardrobe:    { emoji: '🚪', kind: 'partyTrigger', text: '¡Saliendo del clóset!' }, // ícono propio, ver drawWardrobeIcon()
     eggplant:    { emoji: '🍆', kind: 'partyBonus', text: 'Mmmm' },
-    tanktop:     { emoji: '🎽', kind: 'partyBonus', text: '¡Con la musculosa puesta!' },
+    tanktop:     { emoji: '🎽', kind: 'partyBonus', text: '¡Tiembla el músculo!' },
     rainbowflag: { emoji: '🏳️‍🌈', kind: 'partyBonus', text: '¡Orgullo!' },
 
     chickenman:  { emoji: '🐔', kind: 'chickenBonus', text: '¡Cocorocó!' },
@@ -223,6 +254,9 @@
   var overlayTitleEl = document.getElementById('overlayTitle');
   var finalScoreTextEl = document.getElementById('finalScoreText');
   var btnRetryEl = document.getElementById('btnRetry');
+  var overlayStartEl = document.getElementById('overlayStart');
+  var startSpriteEl = document.getElementById('startSprite');
+  var btnStartEl = document.getElementById('btnStart');
 
   var Game = null; // se crea en resetGame()
   var canvasWidth = 0, canvasHeight = 0, dpr = 1;
@@ -580,6 +614,22 @@
     resetGame();
   });
 
+  // Pantalla de inicio: el sprite del jugador (el que se ríe con la
+  // lengua afuera) cicla ahí mismo para mostrarse antes de largar.
+  var startSpriteFrame = 0;
+  startSpriteEl.src = PLAYER_SPRITE_FRAMES[0];
+  setInterval(function () {
+    startSpriteFrame = (startSpriteFrame + 1) % PLAYER_SPRITE_FRAMES.length;
+    startSpriteEl.src = PLAYER_SPRITE_FRAMES[startSpriteFrame];
+  }, 200);
+
+  btnStartEl.addEventListener('click', function () {
+    overlayStartEl.classList.remove('visible');
+    ensureAudio();
+    Game.state = 'playing';
+    syncMusic();
+  });
+
   // ==== 4. RESIZE ====
   function resizeCanvas() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -800,10 +850,17 @@
     if (p.invulnerableTimer > 0) p.invulnerableTimer -= dt;
     if (p.partyEffectTimer > 0) p.partyEffectTimer -= dt;
 
-    p.animTimer += dt;
-    if (p.animTimer >= PLAYER_ANIM_FRAME_TIME) {
-      p.animTimer -= PLAYER_ANIM_FRAME_TIME;
-      p.animFrame = (p.animFrame + 1) % Math.max(1, playerSpriteImgs.length);
+    if (p.parachuteOpen) {
+      // Con el paracaídas abierto el sprite queda quieto en la pose de
+      // manos arriba (frame 0) en vez de seguir el loop de caída libre.
+      p.animFrame = 0;
+      p.animTimer = 0;
+    } else {
+      p.animTimer += dt;
+      if (p.animTimer >= PLAYER_ANIM_FRAME_TIME) {
+        p.animTimer -= PLAYER_ANIM_FRAME_TIME;
+        p.animFrame = (p.animFrame + 1) % Math.max(1, playerSpriteImgs.length);
+      }
     }
   }
 
@@ -820,16 +877,21 @@
   }
 
   // Título académico: un evento aparte, fuera de Game.entities, para que
-  // sea imposible de agarrar (nunca pasa por checkCollisions). Se mueve de
-  // lado a lado un rato y, al irse, deja el chiste de "Recursada".
+  // sea imposible de agarrar (nunca pasa por checkCollisions). Siempre
+  // entra por arriba y cae rápido; a mitad de camino se prende fuego y
+  // termina desapareciendo con el chiste de "¡Plop!!".
   function createDiploma() {
     return {
-      x: randRange(80, Math.max(160, canvasWidth - 80)),
-      y: randRange(canvasHeight * 0.22, canvasHeight * 0.5),
-      dir: Math.random() < 0.5 ? -1 : 1,
-      speed: randRange(140, 220),
-      timer: CONFIG.DIPLOMA_DURATION
+      x: randRange(60, Math.max(120, canvasWidth - 60)),
+      y: -CONFIG.OBJECT_SIZE,
+      burning: false,
+      timer: 0,
+      smokeTimer: 0
     };
+  }
+
+  function spawnDiplomaFireParticle(x, y, emoji) {
+    Game.particles.push(createParticle(x + randRange(-10, 10), y + randRange(-8, 8), emoji));
   }
 
   function updateDiploma(dt) {
@@ -840,13 +902,29 @@
       return;
     }
     var d = Game.diploma;
-    var margin = 30;
-    d.x += d.dir * d.speed * dt;
-    if (d.x < margin) { d.x = margin; d.dir = 1; }
-    if (d.x > canvasWidth - margin) { d.x = canvasWidth - margin; d.dir = -1; }
-    d.timer -= dt;
-    if (d.timer <= 0) {
-      spawnFloatingText(d.x, d.y, 'Recursada', '#ff6b6b');
+    d.y += CONFIG.DIPLOMA_FALL_SPEED * dt;
+    d.timer += dt;
+
+    if (!d.burning && d.timer >= CONFIG.DIPLOMA_BURN_AFTER) {
+      d.burning = true;
+      d.timer = 0;
+    }
+
+    if (d.burning) {
+      d.smokeTimer -= dt;
+      if (d.smokeTimer <= 0) {
+        spawnDiplomaFireParticle(d.x, d.y, Math.random() < 0.5 ? '🔥' : '💨');
+        d.smokeTimer = 0.09;
+      }
+      if (d.timer >= CONFIG.DIPLOMA_BURN_DURATION) {
+        for (var i = 0; i < 5; i++) spawnDiplomaFireParticle(d.x, d.y, '🔥');
+        spawnFloatingText(d.x, d.y, '¡Plop!!', '#ffb347');
+        Game.diploma = null;
+        return;
+      }
+    }
+
+    if (d.y - CONFIG.OBJECT_SIZE > canvasHeight + 40) {
       Game.diploma = null;
     }
   }
@@ -991,7 +1069,20 @@
   // (look pixel art) y después se pinta escalada con drawImage: es el único
   // elemento del fondo, junto con el personaje, que queda "pixelado" — el
   // resto del juego (texto, objetos, fondo) se renderiza normal/nítido.
-  var CLOUD_SPRITE_W = 50, CLOUD_SPRITE_H = 30;
+  // Se arma con un grid de bloques (como las nubes clásicas de 8-bit) en
+  // vez de elipses superpuestas, que al bajar la resolución se veían como
+  // manchas circulares en vez de una nube reconocible.
+  var CLOUD_GRID = [
+    '0011001000',
+    '0111111100',
+    '1111111110',
+    '1111111111',
+    '0111111110',
+    '0011111000'
+  ];
+  var CLOUD_CELL = 5;
+  var CLOUD_SPRITE_W = CLOUD_CELL * CLOUD_GRID[0].length;
+  var CLOUD_SPRITE_H = CLOUD_CELL * CLOUD_GRID.length;
   var cloudSpriteCache = null;
   function getCloudSprite() {
     if (cloudSpriteCache) return cloudSpriteCache;
@@ -999,22 +1090,24 @@
     off.width = CLOUD_SPRITE_W;
     off.height = CLOUD_SPRITE_H;
     var octx = off.getContext('2d');
-    octx.translate(CLOUD_SPRITE_W / 2, CLOUD_SPRITE_H / 2 + 2);
-    octx.scale(0.5, 0.5);
-    octx.beginPath();
-    octx.ellipse(0, 0, 34, 20, 0, 0, Math.PI * 2);
-    octx.ellipse(-26, 6, 22, 15, 0, 0, Math.PI * 2);
-    octx.ellipse(28, 8, 24, 16, 0, 0, Math.PI * 2);
-    octx.ellipse(-6, -14, 24, 18, 0, 0, Math.PI * 2);
-    octx.ellipse(18, -10, 20, 15, 0, 0, Math.PI * 2);
     octx.fillStyle = '#ffffff';
-    octx.fill();
-    // Contorno sutil para que la nube se siga viendo contra cualquier fondo
+    for (var row = 0; row < CLOUD_GRID.length; row++) {
+      for (var col = 0; col < CLOUD_GRID[row].length; col++) {
+        if (CLOUD_GRID[row][col] === '1') {
+          octx.fillRect(col * CLOUD_CELL, row * CLOUD_CELL, CLOUD_CELL, CLOUD_CELL);
+        }
+      }
+    }
+    // Sombra sutil en la fila de abajo para que se separe del cielo
     // (incluido el modo fiesta, donde el fondo rota de color y puede quedar
     // muy claro y "comerse" el blanco de la nube).
-    octx.lineWidth = 4;
-    octx.strokeStyle = 'rgba(90,110,140,0.5)';
-    octx.stroke();
+    var lastRow = CLOUD_GRID.length - 1;
+    octx.fillStyle = 'rgba(90,110,140,0.45)';
+    for (var col2 = 0; col2 < CLOUD_GRID[lastRow].length; col2++) {
+      if (CLOUD_GRID[lastRow][col2] === '1') {
+        octx.fillRect(col2 * CLOUD_CELL, CLOUD_SPRITE_H - 2, CLOUD_CELL, 2);
+      }
+    }
     cloudSpriteCache = off;
     return cloudSpriteCache;
   }
@@ -1158,23 +1251,25 @@
     ctx.stroke();
   }
 
-  // Rayas de viento detrás del jugador en caída libre; desaparecen apenas
-  // se abre el paracaídas (coincide con que el sonido de viento también corta).
+  // Rayas de viento a los costados del jugador en caída libre; desaparecen
+  // apenas se abre el paracaídas (coincide con que el sonido de viento
+  // también corta). Suben como el resto del mundo (objetos, nubes), no bajan.
   function drawWindStreaks(p) {
     ctx.save();
     ctx.translate(p.x, p.y);
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
     ctx.lineWidth = 2;
     var n = 4;
     for (var i = 0; i < n; i++) {
       var phase = (Game.windPhase + i * 0.27) % 1;
-      var sx = -p.width * 0.7 + i * (p.width * 0.46);
-      var len = 14 + phase * 10;
-      var yOff = -p.height * 0.15 + Math.sin(i * 2.1) * p.height * 0.3 + phase * p.height * 0.8;
-      ctx.globalAlpha = 0.55 * (1 - phase);
+      var side = i % 2 === 0 ? -1 : 1;
+      var sx = side * (p.width * 0.62 + (i % 2) * p.width * 0.1);
+      var len = 16 + phase * 12;
+      var yBottom = p.height * 0.7 - phase * p.height * 1.6;
+      ctx.globalAlpha = 0.6 * (1 - phase);
       ctx.beginPath();
-      ctx.moveTo(sx, yOff);
-      ctx.lineTo(sx, yOff - len);
+      ctx.moveTo(sx, yBottom);
+      ctx.lineTo(sx, yBottom - len);
       ctx.stroke();
     }
     ctx.restore();
@@ -1242,17 +1337,22 @@
   function renderDiploma() {
     if (!Game.diploma) return;
     var d = Game.diploma;
-    drawEmoji('📜', d.x, d.y, CONFIG.OBJECT_SIZE);
-    ctx.save();
-    ctx.font = 'bold 13px system-ui, -apple-system, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.strokeText('Título académico', d.x, d.y - CONFIG.OBJECT_SIZE * 0.75);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText('Título académico', d.x, d.y - CONFIG.OBJECT_SIZE * 0.75);
-    ctx.restore();
+    if (d.burning) {
+      // parpadea entre el diploma y el fuego para vender que se está quemando
+      drawEmoji(Math.floor(d.timer * 14) % 2 === 0 ? '🔥' : '📜', d.x, d.y, CONFIG.OBJECT_SIZE);
+    } else {
+      drawEmoji('📜', d.x, d.y, CONFIG.OBJECT_SIZE);
+      ctx.save();
+      ctx.font = 'bold 13px system-ui, -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.strokeText('Título académico', d.x, d.y - CONFIG.OBJECT_SIZE * 0.75);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('Título académico', d.x, d.y - CONFIG.OBJECT_SIZE * 0.75);
+      ctx.restore();
+    }
   }
 
   function renderFlash() {
@@ -1332,6 +1432,9 @@
   // ==== 10. INICIALIZACIÓN ====
   resizeCanvas();
   resetGame();
+  // Arranca en pausa mostrando la pantalla de inicio; recién juega la
+  // física/spawns cuando se toca "Saltar" (ver el listener de btnStartEl).
+  Game.state = 'start';
   requestAnimationFrame(gameLoop);
 })();
 </script>
