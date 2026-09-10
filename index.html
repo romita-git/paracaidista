@@ -41,6 +41,48 @@
   }
   #hudLives { font-size: 20px; letter-spacing: 2px; }
   #hudScore { font-size: 18px; }
+  #altBar {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 46px);
+    right: calc(env(safe-area-inset-right, 0px) + 14px);
+    width: 34px;
+    height: 34vh;
+    max-height: 320px;
+    min-height: 140px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #altBarPlane {
+    font-size: 20px;
+    text-shadow: 2px 2px 0 rgba(0,0,0,.8);
+    line-height: 1;
+  }
+  #altBarTrack {
+    position: relative;
+    flex: 1;
+    width: 6px;
+    margin: 4px 0;
+    background: rgba(255,255,255,0.28);
+    border: 2px solid rgba(0,0,0,0.6);
+    border-radius: 3px;
+  }
+  #altBarParachute {
+    position: absolute;
+    left: 50%;
+    top: 0%;
+    transform: translate(-50%, -50%);
+    font-size: 22px;
+    text-shadow: 2px 2px 0 rgba(0,0,0,.8);
+    transition: top 0.25s linear;
+  }
+  #altBarGround {
+    font-size: 18px;
+    text-shadow: 2px 2px 0 rgba(0,0,0,.8);
+    line-height: 1;
+  }
   .overlay {
     position: fixed;
     inset: 0;
@@ -86,11 +128,15 @@
   }
   .overlay button:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 #000; }
   #startSprite {
-    width: 220px;
+    width: min(260px, 62vw);
     height: auto;
-    image-rendering: pixelated;
-    image-rendering: -moz-crisp-edges;
-    image-rendering: crisp-edges;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border: 3px solid #222;
+    box-shadow: 4px 4px 0 #000;
+  }
+  #overlayStart {
+    background: #000;
   }
   #startTitle {
     font-size: 26px;
@@ -132,6 +178,12 @@
   <div id="hudScore">0s</div>
 </div>
 
+<div id="altBar">
+  <div id="altBarPlane">✈️</div>
+  <div id="altBarTrack"><div id="altBarParachute">🪂</div></div>
+  <div id="altBarGround">🟫</div>
+</div>
+
 <div id="startHint">Arrastrá para moverte · Toque corto: abrir/cerrar paracaídas</div>
 
 <div id="overlayGameOver" class="overlay">
@@ -164,6 +216,7 @@
   var CONFIG = {
     PLAYER_WIDTH: 164,  // el sprite ahora es la dupla en tándem (más ancho que alto); x2 para que se vea bien
     PLAYER_HEIGHT: 152,
+    PLAYER_HITBOX_SCALE: 0.7,  // la caja de colisión real es 30% más chica que el sprite dibujado, para que sea más fácil esquivar
     PLAYER_MAX_LIVES: 3,
     PLAYER_START_LIVES: 3,
 
@@ -214,7 +267,12 @@
     DIPLOMA_FALL_SPEED: 280,             // px/seg cayendo (rápido, imposible de seguir)
     DIPLOMA_BURN_AFTER: 1.3,             // segundos cayendo antes de prenderse fuego
     DIPLOMA_BURN_DURATION: 0.5,          // segundos ardiendo antes del "¡Plop!!"
-    DIPLOMA_TRIGGER_CHANCE_PER_SEC: 0.018 // probabilidad por segundo de que aparezca
+    DIPLOMA_TRIGGER_CHANCE_PER_SEC: 0.018, // probabilidad por segundo de que aparezca
+
+    BRAIN_MODE_HALO_DURATION: 1.6, // segundos que dura el halo de luz + texto "ego ego ego..."
+    BRAIN_MODE_AURA_PENALTY: 1000, // puntos que se pierden si se intenta usar el modo cerebrito de nuevo
+    BRAIN_BUTTON_SIZE: 88,         // el doble de grande que un objeto normal (44px)
+    BRAIN_BUTTON_GAP: 14           // separación entre el sprite del jugador y el botón
   };
 
   // Definición central de tipos de objeto: emoji + comportamiento + texto
@@ -250,6 +308,7 @@
   var ctx = canvas.getContext('2d');
   var hudLivesEl = document.getElementById('hudLives');
   var hudScoreEl = document.getElementById('hudScore');
+  var altBarParachuteEl = document.getElementById('altBarParachute');
   var overlayGameOverEl = document.getElementById('overlayGameOver');
   var overlayTitleEl = document.getElementById('overlayTitle');
   var finalScoreTextEl = document.getElementById('finalScoreText');
@@ -360,6 +419,8 @@
       bgHueTime: 0,
       flashTimer: 0,
       windPhase: 0,
+      brainModeUsed: false,
+      brainModeHaloTimer: 0,
       player: createPlayer()
     };
     overlayTitleEl.textContent = 'Game Over';
@@ -393,13 +454,33 @@
     osc.stop(t0 + duration + 0.03);
   }
 
+  // Barrido de frecuencia (glissando): además de playTone, para efectos
+  // tipo "salto" de Mario Bros donde el tono sube o baja durante la nota.
+  function playSweep(freqStart, freqEnd, duration, type, peakGain, delay) {
+    if (!audioCtx) return;
+    var t0 = audioCtx.currentTime + (delay || 0);
+    var osc = audioCtx.createOscillator();
+    var gain = audioCtx.createGain();
+    osc.type = type || 'square';
+    osc.frequency.setValueAtTime(freqStart, t0);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(freqEnd, 1), t0 + duration);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(peakGain || 0.18, t0 + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t0);
+    osc.stop(t0 + duration + 0.03);
+  }
+
   function sfxHazard() {
     playTone(150, 0.16, 'sawtooth', 0.16);
     playTone(90, 0.22, 'square', 0.12, 0.03);
   }
+  // Estilo "moneda" de Mario Bros: dos notas cortas de onda cuadrada, la
+  // segunda una quinta arriba.
   function sfxHeal() {
-    playTone(660, 0.1, 'sine', 0.15);
-    playTone(880, 0.16, 'sine', 0.18, 0.08);
+    playTone(988.35, 0.09, 'square', 0.16);
+    playTone(1318.51, 0.22, 'square', 0.18, 0.09);
   }
   function sfxPartyTrigger() {
     playTone(440, 0.1, 'square', 0.15);
@@ -411,12 +492,13 @@
     playTone(1046, 0.14, 'triangle', 0.22, 0.06);
   }
   function sfxGameOver() {
-    playTone(392, 0.25, 'sawtooth', 0.18);
-    playTone(311, 0.3, 'sawtooth', 0.16, 0.2);
-    playTone(220, 0.4, 'sawtooth', 0.14, 0.4);
+    playTone(392, 0.25, 'square', 0.18);
+    playTone(311, 0.3, 'square', 0.16, 0.2);
+    playTone(220, 0.4, 'square', 0.14, 0.4);
   }
+  // Salto estilo Mario Bros: barrido de tono ascendente y rápido.
   function sfxParachute() {
-    playTone(320, 0.1, 'sine', 0.12);
+    playSweep(280, 720, 0.16, 'square', 0.15);
   }
   function sfxPerimetral() {
     playTone(880, 0.12, 'square', 0.18);
@@ -429,6 +511,18 @@
     playTone(659.25, 0.16, 'triangle', 0.2, 0.14);
     playTone(783.99, 0.16, 'triangle', 0.2, 0.28);
     playTone(1046.5, 0.32, 'triangle', 0.22, 0.42);
+  }
+  // Modo cerebrito: fanfarria triunfal ascendente con barrido final.
+  function sfxBrainMode() {
+    playTone(523.25, 0.1, 'square', 0.2);
+    playTone(659.25, 0.1, 'square', 0.2, 0.1);
+    playTone(783.99, 0.1, 'square', 0.2, 0.2);
+    playTone(1046.5, 0.16, 'square', 0.22, 0.3);
+    playSweep(1046.5, 1975.5, 0.35, 'triangle', 0.18, 0.42);
+  }
+  // Intento fallido de reusar el modo cerebrito: barrido descendente y sordo.
+  function sfxAuraPenalty() {
+    playSweep(300, 80, 0.35, 'sawtooth', 0.16);
   }
 
   // Sonido de viento ambiente (ruido blanco filtrado, generado en vez de
@@ -506,6 +600,20 @@
           { bass: 220.00, lead: 440.00 },
           { bass: 0, lead: 0 }
         ]
+      },
+      // Jingle de pantalla de inicio: arpegio rápido estilo 8-bit ochentoso/noventoso.
+      intro: {
+        stepTime: 0.14,
+        steps: [
+          { bass: 130.81, lead: 523.25 },
+          { bass: 0,      lead: 659.25 },
+          { bass: 164.81, lead: 783.99 },
+          { bass: 0,      lead: 659.25 },
+          { bass: 146.83, lead: 587.33 },
+          { bass: 0,      lead: 739.99 },
+          { bass: 196.00, lead: 987.77 },
+          { bass: 0,      lead: 783.99 }
+        ]
       }
     };
 
@@ -559,8 +667,27 @@
     pointerId: null,
     startX: 0, startY: 0,
     startTime: 0,
-    moved: false
+    moved: false,
+    onBrainButton: false
   };
+
+  // Botón del cerebrito: flota pegado al costado del jugador (a 2x el tamaño
+  // de un objeto normal), así que su posición en pantalla cambia cuadro a
+  // cuadro con Rufo. Se recalcula acá para el hit-test y para dibujarlo.
+  function getBrainButtonPos() {
+    var p = Game.player;
+    var half = CONFIG.BRAIN_BUTTON_SIZE / 2;
+    var x = p.x + p.width / 2 + CONFIG.BRAIN_BUTTON_GAP + half;
+    if (x + half > canvasWidth - 4) x = p.x - p.width / 2 - CONFIG.BRAIN_BUTTON_GAP - half;
+    return { x: x, y: p.y };
+  }
+
+  function isOnBrainButton(clientX, clientY) {
+    if (!Game.player) return false;
+    var pos = getBrainButtonPos();
+    var half = CONFIG.BRAIN_BUTTON_SIZE / 2;
+    return Math.abs(clientX - pos.x) <= half && Math.abs(clientY - pos.y) <= half;
+  }
 
   function onPointerDown(e) {
     if (input.active) return;
@@ -573,12 +700,17 @@
     input.startTime = performance.now();
     input.moved = false;
     try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
-    if (Game.player) Game.player.targetX = clamp(e.clientX, Game.player.width / 2, canvasWidth - Game.player.width / 2);
+
+    input.onBrainButton = Game.state === 'playing' && isOnBrainButton(e.clientX, e.clientY);
+    if (!input.onBrainButton && Game.player) {
+      Game.player.targetX = clamp(e.clientX, Game.player.width / 2, canvasWidth - Game.player.width / 2);
+    }
     e.preventDefault();
   }
 
   function onPointerMove(e) {
     if (!input.active || e.pointerId !== input.pointerId) return;
+    if (input.onBrainButton) { e.preventDefault(); return; }
     var dx = Math.abs(e.clientX - input.startX);
     var dy = Math.abs(e.clientY - input.startY);
     if (dx > CONFIG.TAP_MAX_MOVE_PX || dy > CONFIG.TAP_MAX_MOVE_PX) input.moved = true;
@@ -588,6 +720,17 @@
 
   function onPointerUp(e) {
     if (!input.active || e.pointerId !== input.pointerId) return;
+    if (input.onBrainButton) {
+      if (Game.state === 'playing') {
+        if (!Game.brainModeUsed) triggerBrainMode();
+        else triggerBrainModeDenied();
+      }
+      input.active = false;
+      input.pointerId = null;
+      input.onBrainButton = false;
+      e.preventDefault();
+      return;
+    }
     var duration = performance.now() - input.startTime;
     var isTap = !input.moved && duration <= CONFIG.TAP_MAX_DURATION_MS;
     if (isTap && Game.state === 'playing') {
@@ -603,6 +746,7 @@
   function onPointerCancel() {
     input.active = false;
     input.pointerId = null;
+    input.onBrainButton = false;
   }
 
   canvas.addEventListener('pointerdown', onPointerDown, { passive: false });
@@ -614,14 +758,17 @@
     resetGame();
   });
 
-  // Pantalla de inicio: el sprite del jugador (el que se ríe con la
-  // lengua afuera) cicla ahí mismo para mostrarse antes de largar.
-  var startSpriteFrame = 0;
-  startSpriteEl.src = PLAYER_SPRITE_FRAMES[0];
-  setInterval(function () {
-    startSpriteFrame = (startSpriteFrame + 1) % PLAYER_SPRITE_FRAMES.length;
-    startSpriteEl.src = PLAYER_SPRITE_FRAMES[startSpriteFrame];
-  }, 200);
+  // Pantalla de inicio: portada del juego, fija (ya no cicla sprites).
+  startSpriteEl.src = 'Portada%20juego.JPG';
+
+  // El audio necesita un gesto del usuario para arrancar: el primer toque
+  // en la pantalla de inicio dispara el jingle de arranque (chiptune 80s/90s).
+  function startIntroMusicOnce() {
+    if (Game.state !== 'start') return;
+    ensureAudio();
+    MusicEngine.start('intro');
+  }
+  overlayStartEl.addEventListener('pointerdown', startIntroMusicOnce, { passive: true });
 
   btnStartEl.addEventListener('click', function () {
     overlayStartEl.classList.remove('visible');
@@ -770,6 +917,28 @@
     syncMusic();
   }
 
+  // Habilidad especial de una sola vez por partida: se activa al abrir el
+  // paracaídas por primera vez. Limpia todos los obstáculos en pantalla
+  // (incluido el diploma, que normalmente es imposible de agarrar) y muestra
+  // un halo de luz con el cerebrito y la palabra "ego" repetida.
+  function triggerBrainMode() {
+    Game.brainModeUsed = true;
+    Game.entities = [];
+    Game.diploma = null;
+    Game.brainModeHaloTimer = CONFIG.BRAIN_MODE_HALO_DURATION;
+    spawnFloatingText(Game.player.x, Game.player.y - Game.player.height * 0.75, '🧠 MODO CEREBRITO', '#8CFFB0');
+    spawnFloatingText(Game.player.x, Game.player.y - Game.player.height * 0.45, 'EGO EGO EGO...', '#ffffff');
+    sfxBrainMode();
+  }
+
+  // Si ya se usó el modo cerebrito, un segundo intento no hace nada salvo
+  // castigar con una penalización de puntaje y el chiste de "aura -1000".
+  function triggerBrainModeDenied() {
+    Game.score = Math.max(0, Game.score - CONFIG.BRAIN_MODE_AURA_PENALTY);
+    spawnFloatingText(Game.player.x, Game.player.y - Game.player.height * 0.6, 'AURA -1000', '#ff4d4d');
+    sfxAuraPenalty();
+  }
+
   function resolveCollision(item) {
     var def = ITEM_DEFS[item.type];
     switch (def.kind) {
@@ -823,9 +992,17 @@
   }
 
   function checkCollisions() {
+    // Hitbox real más chica que el sprite dibujado (PLAYER_HITBOX_SCALE):
+    // el jugador se ve grande pero perdona más al esquivar.
+    var hitbox = {
+      x: Game.player.x,
+      y: Game.player.y,
+      width: Game.player.width * CONFIG.PLAYER_HITBOX_SCALE,
+      height: Game.player.height * CONFIG.PLAYER_HITBOX_SCALE
+    };
     for (var i = Game.entities.length - 1; i >= 0; i--) {
       var item = Game.entities[i];
-      if (!aabbIntersect(Game.player, item)) continue;
+      if (!aabbIntersect(hitbox, item)) continue;
       resolveCollision(item);
       Game.entities.splice(i, 1);
     }
@@ -977,6 +1154,7 @@
     }
 
     if (Game.flashTimer > 0) Game.flashTimer -= dt;
+    if (Game.brainModeHaloTimer > 0) Game.brainModeHaloTimer -= dt;
     if (!Game.player.parachuteOpen) Game.windPhase = (Game.windPhase + dt * 1.8) % 1;
 
     Game.spawnAccumulator += dt * 1000;
@@ -1318,6 +1496,30 @@
     ctx.restore();
   }
 
+  // Halo de luz pulsante del modo cerebrito: crece y se desvanece a lo
+  // largo de BRAIN_MODE_HALO_DURATION, centrado en el jugador.
+  function renderBrainHalo() {
+    var t = clamp(Game.brainModeHaloTimer / CONFIG.BRAIN_MODE_HALO_DURATION, 0, 1);
+    var p = Game.player;
+    var size = lerp(50, 260, 1 - t);
+    ctx.save();
+    ctx.globalAlpha = t;
+    drawHalo(p.x, p.y, size);
+    ctx.restore();
+  }
+
+  // Botón del cerebrito: flota pegado al costado del jugador durante toda
+  // la partida (el doble de grande que un objeto normal), listo para
+  // activar el modo cerebrito con un toque dedicado (ver isOnBrainButton).
+  function renderBrainButton() {
+    var pos = getBrainButtonPos();
+    var pulse = Game.brainModeHaloTimer > 0
+      ? 1 + 0.25 * Math.sin(Game.brainModeHaloTimer * 18)
+      : 1 + Math.sin(Game.elapsedTime * 3) * 0.05;
+    drawHalo(pos.x, pos.y, CONFIG.BRAIN_BUTTON_SIZE * 0.7 * pulse);
+    drawEmoji('🧠', pos.x, pos.y, CONFIG.BRAIN_BUTTON_SIZE * pulse);
+  }
+
   function renderEntities() {
     for (var i = 0; i < Game.entities.length; i++) {
       var e = Game.entities[i];
@@ -1398,6 +1600,8 @@
     renderEntities();
     renderDiploma();
     drawPlayer();
+    if (Game.brainModeHaloTimer > 0) renderBrainHalo();
+    if (Game.state === 'playing') renderBrainButton();
     renderParticles();
     renderFlash();
   }
@@ -1410,6 +1614,10 @@
     var lives = Math.max(0, Game.lives);
     hudLivesEl.textContent = '❤️'.repeat(lives) + '🖤'.repeat(CONFIG.PLAYER_MAX_LIVES - lives);
     hudScoreEl.textContent = formatAltitude(Game.altitude) + (Game.mode === 'party' ? ' 🏳️‍🌈' : '');
+
+    // Progreso de la caída: 0% recién saltado (avión, arriba) -> 100% en el piso (abajo).
+    var progress = clamp(1 - Game.altitude / CONFIG.ALTITUDE_START, 0, 1);
+    altBarParachuteEl.style.top = (progress * 100) + '%';
   }
 
   // ==== 9. MAIN LOOP ====
