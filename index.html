@@ -216,7 +216,7 @@
   var CONFIG = {
     PLAYER_WIDTH: 164,  // el sprite ahora es la dupla en tándem (más ancho que alto); x2 para que se vea bien
     PLAYER_HEIGHT: 152,
-    PLAYER_HITBOX_SCALE: 0.7,  // la caja de colisión real es 30% más chica que el sprite dibujado, para que sea más fácil esquivar
+    PLAYER_HITBOX_SCALE: 0.49,  // la caja de colisión real es ~50% más chica que el sprite dibujado (dos recortes del 30% acumulados), para que sea más fácil esquivar
     PLAYER_MAX_LIVES: 3,
     PLAYER_START_LIVES: 3,
 
@@ -263,23 +263,25 @@
     DESCENT_RATE_CLOSED: 130,    // m/s con paracaídas cerrado (~77s si nunca lo abrís)
     DESCENT_RATE_OPEN: 45,       // m/s con paracaídas abierto (más lento pero más seguro)
     PERIMETRAL_SETBACK_M: 1000,  // metros que te hace retroceder el perimetral
+    PERIMETRAL_BOUNCE_DURATION: 0.55, // segundos que dura la animación de "salir disparado" hacia arriba
+    PERIMETRAL_BOUNCE_HEIGHT: 130,    // px que sube el sprite en pantalla en el pico del rebote
 
     DIPLOMA_FALL_SPEED: 280,             // px/seg cayendo (rápido, imposible de seguir)
     DIPLOMA_BURN_AFTER: 1.3,             // segundos cayendo antes de prenderse fuego
     DIPLOMA_BURN_DURATION: 0.5,          // segundos ardiendo antes del "¡Plop!!"
     DIPLOMA_TRIGGER_CHANCE_PER_SEC: 0.018, // probabilidad por segundo de que aparezca
 
-    BRAIN_MODE_HALO_DURATION: 1.6, // segundos que dura el halo de luz + texto "ego ego ego..."
-    BRAIN_MODE_AURA_PENALTY: 1000, // puntos que se pierden si se intenta usar el modo cerebrito de nuevo
-    BRAIN_BUTTON_SIZE: 88,         // el doble de grande que un objeto normal (44px)
-    BRAIN_BUTTON_GAP: 14           // separación entre el sprite del jugador y el botón
+    BRAIN_MODE_HALO_DURATION: 1.6,  // segundos que dura el barrido de círculos + rayos "EGO"
+    BRAIN_BUTTON_SIZE: 88,          // el doble de grande que un objeto normal (44px)
+    BRAIN_BUTTON_GAP: 14,           // separación entre la cabeza del jugador y el botón
+    BRAIN_BUTTON_FADE_DURATION: 0.6 // segundos que tarda en ponerse gris y desaparecer tras el 2do toque
   };
 
   // Definición central de tipos de objeto: emoji + comportamiento + texto
   // flotante al tocarlo (todo objeto "dice algo"). "chard" es la excepción:
   // su texto incluye un monto aleatorio y se arma en resolveCollision().
   var ITEM_DEFS = {
-    bottle:      { emoji: '🍾', kind: 'hazard', text: '¡Resaca!' },
+    bottle:      { emoji: '🍾', kind: 'hazard', text: '¡Regalo de Demian!' },
     chard:       { emoji: '🥬', kind: 'hazard' },
     lawsuit:     { emoji: '📄', kind: 'hazard', text: 'Restricción de visita' },
     judge:       { emoji: '👨🏻‍⚖️', kind: 'hazard', text: 'Citación del juez' },
@@ -419,8 +421,11 @@
       bgHueTime: 0,
       flashTimer: 0,
       windPhase: 0,
+      perimetralEffectTimer: 0,
       brainModeUsed: false,
       brainModeHaloTimer: 0,
+      brainButtonFadeTimer: 0,
+      brainButtonGone: false,
       player: createPlayer()
     };
     overlayTitleEl.textContent = 'Game Over';
@@ -671,19 +676,17 @@
     onBrainButton: false
   };
 
-  // Botón del cerebrito: flota pegado al costado del jugador (a 2x el tamaño
-  // de un objeto normal), así que su posición en pantalla cambia cuadro a
-  // cuadro con Rufo. Se recalcula acá para el hit-test y para dibujarlo.
+  // Botón del cerebrito: fijo arriba de la cabeza del jugador (a 2x el
+  // tamaño de un objeto normal), así que su posición en pantalla cambia
+  // cuadro a cuadro con Rufo. Se recalcula acá para el hit-test y para dibujarlo.
   function getBrainButtonPos() {
     var p = Game.player;
     var half = CONFIG.BRAIN_BUTTON_SIZE / 2;
-    var x = p.x + p.width / 2 + CONFIG.BRAIN_BUTTON_GAP + half;
-    if (x + half > canvasWidth - 4) x = p.x - p.width / 2 - CONFIG.BRAIN_BUTTON_GAP - half;
-    return { x: x, y: p.y };
+    return { x: p.x, y: p.y - p.height / 2 - CONFIG.BRAIN_BUTTON_GAP - half };
   }
 
   function isOnBrainButton(clientX, clientY) {
-    if (!Game.player) return false;
+    if (!Game.player || Game.brainButtonGone || Game.brainButtonFadeTimer > 0) return false;
     var pos = getBrainButtonPos();
     var half = CONFIG.BRAIN_BUTTON_SIZE / 2;
     return Math.abs(clientX - pos.x) <= half && Math.abs(clientY - pos.y) <= half;
@@ -788,8 +791,20 @@
     canvas.height = Math.round(canvasHeight * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (Game && Game.player) {
-      Game.player.x = clamp(Game.player.x, Game.player.width / 2, canvasWidth - Game.player.width / 2);
-      Game.player.targetX = clamp(Game.player.targetX, Game.player.width / 2, canvasWidth - Game.player.width / 2);
+      if (Game.state === 'start') {
+        // Todavía no arrancó a jugar: si este resize llega recién ahora
+        // (viewport que se está acomodando al cargar, típico en el preview
+        // y en celulares) es seguro recentrar del todo, no se pierde nada.
+        Game.player.x = canvasWidth / 2;
+        Game.player.targetX = canvasWidth / 2;
+      } else {
+        Game.player.x = clamp(Game.player.x, Game.player.width / 2, canvasWidth - Game.player.width / 2);
+        Game.player.targetX = clamp(Game.player.targetX, Game.player.width / 2, canvasWidth - Game.player.width / 2);
+      }
+      // "y" siempre es la misma proporción de la altura de pantalla, así
+      // que resincronizarla en cada resize es siempre correcto (y arregla
+      // el caso en que quedó congelada en un canvasHeight viejo, a veces 0).
+      Game.player.y = canvasHeight * 0.32;
     }
     // BUG: si el resize/cambio de orientación reduce mucho el ancho, una nube
     // que quedó con x fuera del nuevo canvasWidth solo se reubica cuando el
@@ -887,6 +902,22 @@
     Game.particles.push(createTextParticle(x, y - 6, text, color));
   }
 
+  // Ráfaga de flechas hacia arriba, mucho más rápida que una partícula
+  // normal, para que se note que la perimetral te manda para arriba.
+  function spawnPerimetralBoostParticles(x, y) {
+    var n = randInt(6, 8);
+    for (var i = 0; i < n; i++) {
+      Game.particles.push({
+        x: x + randRange(-50, 50),
+        y: y + randRange(10, 60),
+        vy: randRange(-520, -380),
+        life: 0.5,
+        maxLife: 0.5,
+        emoji: '⬆️'
+      });
+    }
+  }
+
   var CONFETTI_COLORS = ['#e63946', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#ff8fab'];
   function spawnConfetti(x, y) {
     var n = randInt(10, 14);
@@ -926,16 +957,18 @@
     Game.entities = [];
     Game.diploma = null;
     Game.brainModeHaloTimer = CONFIG.BRAIN_MODE_HALO_DURATION;
-    spawnFloatingText(Game.player.x, Game.player.y - Game.player.height * 0.75, '🧠 MODO CEREBRITO', '#8CFFB0');
-    spawnFloatingText(Game.player.x, Game.player.y - Game.player.height * 0.45, 'EGO EGO EGO...', '#ffffff');
+    var pos = getBrainButtonPos();
+    spawnFloatingText(pos.x, pos.y - CONFIG.BRAIN_BUTTON_SIZE * 0.6, '🧠 MODO CEREBRITO', '#8CFFB0');
     sfxBrainMode();
   }
 
   // Si ya se usó el modo cerebrito, un segundo intento no hace nada salvo
-  // castigar con una penalización de puntaje y el chiste de "aura -1000".
+  // el chiste de "sin más aura": el botón se pone gris y desaparece para
+  // siempre (ver brainButtonFadeTimer / brainButtonGone).
   function triggerBrainModeDenied() {
-    Game.score = Math.max(0, Game.score - CONFIG.BRAIN_MODE_AURA_PENALTY);
-    spawnFloatingText(Game.player.x, Game.player.y - Game.player.height * 0.6, 'AURA -1000', '#ff4d4d');
+    var pos = getBrainButtonPos();
+    Game.brainButtonFadeTimer = CONFIG.BRAIN_BUTTON_FADE_DURATION;
+    spawnFloatingText(pos.x, pos.y - CONFIG.BRAIN_BUTTON_SIZE * 0.6, 'SIN MÁS AURA', '#9a9a9a');
     sfxAuraPenalty();
   }
 
@@ -986,6 +1019,8 @@
         Game.altitude = Math.min(CONFIG.ALTITUDE_START, Game.altitude + CONFIG.PERIMETRAL_SETBACK_M);
         sfxPerimetral();
         Game.flashTimer = 0.35;
+        Game.perimetralEffectTimer = CONFIG.PERIMETRAL_BOUNCE_DURATION;
+        spawnPerimetralBoostParticles(Game.player.x, Game.player.y + Game.player.height * 0.4);
         spawnFloatingText(item.x, item.y, def.text, '#ffffff');
         break;
     }
@@ -1154,7 +1189,15 @@
     }
 
     if (Game.flashTimer > 0) Game.flashTimer -= dt;
+    if (Game.perimetralEffectTimer > 0) Game.perimetralEffectTimer -= dt;
     if (Game.brainModeHaloTimer > 0) Game.brainModeHaloTimer -= dt;
+    if (Game.brainButtonFadeTimer > 0) {
+      Game.brainButtonFadeTimer -= dt;
+      if (Game.brainButtonFadeTimer <= 0) {
+        Game.brainButtonFadeTimer = 0;
+        Game.brainButtonGone = true;
+      }
+    }
     if (!Game.player.parachuteOpen) Game.windPhase = (Game.windPhase + dt * 1.8) % 1;
 
     Game.spawnAccumulator += dt * 1000;
@@ -1453,11 +1496,22 @@
     ctx.restore();
   }
 
+  // Rebote visual de la perimetral: mientras el timer corre de 1 a 0, el
+  // sprite sube y vuelve a bajar (arco de seno) para que se note el
+  // "empujón" hacia arriba, sin tocar la posición lógica del jugador.
+  function currentPerimetralBounceOffset() {
+    if (Game.perimetralEffectTimer <= 0) return 0;
+    var t = Game.perimetralEffectTimer / CONFIG.PERIMETRAL_BOUNCE_DURATION;
+    return Math.sin(t * Math.PI) * CONFIG.PERIMETRAL_BOUNCE_HEIGHT;
+  }
+
   function drawPlayer() {
     var p = Game.player;
+    var bounce = currentPerimetralBounceOffset();
+    var py = p.y - bounce;
     if (!p.parachuteOpen) drawWindStreaks(p);
     ctx.save();
-    ctx.translate(p.x, p.y);
+    ctx.translate(p.x, py);
     ctx.rotate(p.tilt);
     if (p.invulnerableTimer > 0 && Math.floor(p.invulnerableTimer * 12) % 2 === 0) {
       ctx.globalAlpha = 0.4;
@@ -1473,13 +1527,13 @@
 
     if (p.parachuteOpen) {
       ctx.save();
-      ctx.translate(p.x, p.y);
+      ctx.translate(p.x, py);
       drawParachute(p);
       ctx.restore();
     }
 
     if (p.partyEffectTimer > 0) {
-      drawEmoji('🤩', p.x, p.y - p.height * 0.75, 28);
+      drawEmoji('🤩', p.x, py - p.height * 0.75, 28);
     }
   }
 
@@ -1498,21 +1552,66 @@
 
   // Halo de luz pulsante del modo cerebrito: crece y se desvanece a lo
   // largo de BRAIN_MODE_HALO_DURATION, centrado en el jugador.
-  function renderBrainHalo() {
-    var t = clamp(Game.brainModeHaloTimer / CONFIG.BRAIN_MODE_HALO_DURATION, 0, 1);
-    var p = Game.player;
-    var size = lerp(50, 260, 1 - t);
+  // Barrido del modo cerebrito: anillos concéntricos que nacen en el
+  // cerebro y crecen hasta cubrir toda la pantalla, más rayos radiales con
+  // la palabra "EGO" girando hacia afuera.
+  function renderBrainSweep() {
+    var t = 1 - clamp(Game.brainModeHaloTimer / CONFIG.BRAIN_MODE_HALO_DURATION, 0, 1); // 0 -> 1
+    var pos = getBrainButtonPos();
+    var maxRadius = Math.hypot(canvasWidth, canvasHeight);
+
     ctx.save();
-    ctx.globalAlpha = t;
-    drawHalo(p.x, p.y, size);
+    var ringCount = 3;
+    for (var i = 0; i < ringCount; i++) {
+      var ringT = clamp(t - i * 0.15, 0, 1);
+      if (ringT <= 0) continue;
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(255,245,180,' + ((1 - ringT) * 0.5) + ')';
+      ctx.lineWidth = 6;
+      ctx.arc(pos.x, pos.y, ringT * maxRadius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    var rayCount = 8;
+    ctx.font = 'bold 22px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,' + (1 - t) + ')';
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.lineWidth = 3;
+    for (var r = 0; r < rayCount; r++) {
+      var angle = (r / rayCount) * Math.PI * 2 + t * 1.4;
+      var dist = 40 + t * maxRadius * 0.55;
+      var x = pos.x + Math.cos(angle) * dist;
+      var y = pos.y + Math.sin(angle) * dist;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle + Math.PI / 2);
+      ctx.strokeText('EGO', 0, 0);
+      ctx.fillText('EGO', 0, 0);
+      ctx.restore();
+    }
     ctx.restore();
   }
 
-  // Botón del cerebrito: flota pegado al costado del jugador durante toda
-  // la partida (el doble de grande que un objeto normal), listo para
-  // activar el modo cerebrito con un toque dedicado (ver isOnBrainButton).
+  // Botón del cerebrito: fijo arriba de la cabeza de Rufo durante toda la
+  // partida (el doble de grande que un objeto normal), listo para activar
+  // el modo cerebrito con un toque dedicado (ver isOnBrainButton). Al
+  // gastarse (brainButtonFadeTimer) se pone gris y encoge hasta
+  // desaparecer para siempre (brainButtonGone).
   function renderBrainButton() {
+    if (Game.brainButtonGone) return;
     var pos = getBrainButtonPos();
+    if (Game.brainButtonFadeTimer > 0) {
+      var ft = clamp(Game.brainButtonFadeTimer / CONFIG.BRAIN_BUTTON_FADE_DURATION, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = ft;
+      ctx.filter = 'grayscale(1)';
+      drawEmoji('🧠', pos.x, pos.y, CONFIG.BRAIN_BUTTON_SIZE * (0.6 + 0.4 * ft));
+      ctx.filter = 'none';
+      ctx.restore();
+      return;
+    }
     var pulse = Game.brainModeHaloTimer > 0
       ? 1 + 0.25 * Math.sin(Game.brainModeHaloTimer * 18)
       : 1 + Math.sin(Game.elapsedTime * 3) * 0.05;
@@ -1600,7 +1699,7 @@
     renderEntities();
     renderDiploma();
     drawPlayer();
-    if (Game.brainModeHaloTimer > 0) renderBrainHalo();
+    if (Game.brainModeHaloTimer > 0) renderBrainSweep();
     if (Game.state === 'playing') renderBrainButton();
     renderParticles();
     renderFlash();
