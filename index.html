@@ -429,6 +429,17 @@
     CHICKEN_BONUS_SCORE: 60,
     LIFE_REMAINING_BONUS: 250,   // por cada vida que te quedó, sumado al final de la partida
 
+    // Xilófono: minijuego de un solo uso. Aparece un ícono al llegar a los
+    // 8000m de altitud; al activarlo, la pantalla se limpia de nubes/
+    // objetos, Rufo se mueve solo de un lado a otro, y el jugador controla
+    // la varita para tocar la tecla iluminada durante 10s.
+    XYLO_APPEAR_AT_ALTITUDE: 8000,
+    XYLO_DURATION_S: 10,
+    XYLO_KEY_COUNT: 8,
+    XYLO_HIT_SCORE: 35,
+    XYLO_MISS_PENALTY: 45,
+    XYLO_ICON_SIZE: 56,
+
     // Objetivo: llegar al piso. Arranca a 10.000m y debería tardar ~2min
     // como mucho jugando bien (cerrando el paracaídas casi todo el tiempo).
     ALTITUDE_START: 10000,
@@ -631,6 +642,9 @@
       brainButtonAppearAt: randRange(CONFIG.BRAIN_BUTTON_APPEAR_MIN, CONFIG.BRAIN_BUTTON_APPEAR_MAX),
       dashUsed: false,
       dash: { state: 'idle', startAltitude: 0, startTime: 0, warningTimer: 0, deathTimer: 0 },
+      xyloUsed: false,
+      xyloVisible: false,
+      xylo: { state: 'idle', timer: 0, litKeyIndex: 0, wandX: 0, playerPhase: 0, bolts: [] },
       player: createPlayer()
     };
     input.isDashHold = false;
@@ -768,6 +782,23 @@
     playTone(90, 0.3, 'square', 0.26);
     playTone(55, 0.45, 'sawtooth', 0.22, 0.06);
     playTone(35, 0.5, 'square', 0.2, 0.12);
+  }
+
+  // Arranque del xilófono: un arpegio ascendente cortito, tipo "a jugar".
+  function sfxXyloStart() {
+    playTone(392, 0.08, 'triangle', 0.18);
+    playTone(523.25, 0.08, 'triangle', 0.18, 0.08);
+    playTone(659.25, 0.12, 'triangle', 0.2, 0.16);
+  }
+  // Nota correcta: un "ding" limpio, distinto en cada tecla para que se
+  // sienta como tocar de verdad.
+  function sfxXyloHit() {
+    var notes = [392, 440, 493.88, 523.25, 587.33, 659.25, 739.99, 783.99];
+    playTone(notes[randInt(0, notes.length - 1)], 0.14, 'sine', 0.2);
+  }
+  // Nota incorrecta: buzz corto y sordo.
+  function sfxXyloMiss() {
+    playTone(140, 0.14, 'sawtooth', 0.2);
   }
 
   // Sonido de viento ambiente (ruido blanco filtrado, generado en vez de
@@ -914,6 +945,8 @@
     startTime: 0,
     moved: false,
     onBrainButton: false,
+    onXyloIcon: false,
+    xyloControl: false,
     isDashHold: false,
     comboTapCount: 0,
     comboLastTapTime: 0
@@ -949,8 +982,18 @@
     input.isDashHold = false;
     try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
 
-    input.onBrainButton = Game.state === 'playing' && isOnBrainButton(e.clientX, e.clientY);
-    if (!input.onBrainButton && Game.player) {
+    // Xilófono activo: este toque controla la varita y nada más (ni mueve
+    // a Rufo, ni cuenta para el combo de la caída rápida, ni el cerebrito).
+    input.xyloControl = Game.xylo.state === 'active';
+    if (input.xyloControl) {
+      xyloKeyTap(e.clientX);
+      e.preventDefault();
+      return;
+    }
+
+    input.onXyloIcon = Game.state === 'playing' && isOnXyloIcon(e.clientX, e.clientY);
+    input.onBrainButton = !input.onXyloIcon && Game.state === 'playing' && isOnBrainButton(e.clientX, e.clientY);
+    if (!input.onBrainButton && !input.onXyloIcon && Game.player) {
       Game.player.targetX = clamp(e.clientX, Game.player.width / 2, canvasWidth - Game.player.width / 2);
     }
 
@@ -959,7 +1002,7 @@
     // limpio al soltar, eso era frágil con el dedo real en un celular).
     // Al 3er press seguido arranca ya mismo, sin esperar el release, y hay
     // que mantenerlo apretado para sostenerla (ver onPointerUp).
-    if (!input.onBrainButton && Game.state === 'playing' && !Game.dashUsed && Game.dash.state === 'idle') {
+    if (!input.onBrainButton && !input.onXyloIcon && Game.state === 'playing' && !Game.dashUsed && Game.dash.state === 'idle') {
       var downNow = performance.now();
       if (input.comboTapCount > 0 && downNow - input.comboLastTapTime <= CONFIG.DASH_TAP_WINDOW_MS) {
         input.comboTapCount++;
@@ -978,7 +1021,12 @@
 
   function onPointerMove(e) {
     if (!input.active || e.pointerId !== input.pointerId) return;
-    if (input.onBrainButton) { e.preventDefault(); return; }
+    if (input.xyloControl) {
+      Game.xylo.wandX = clamp(e.clientX, 0, canvasWidth);
+      e.preventDefault();
+      return;
+    }
+    if (input.onBrainButton || input.onXyloIcon) { e.preventDefault(); return; }
     var dx = Math.abs(e.clientX - input.startX);
     var dy = Math.abs(e.clientY - input.startY);
     if (dx > CONFIG.TAP_MAX_MOVE_PX || dy > CONFIG.TAP_MAX_MOVE_PX) input.moved = true;
@@ -988,6 +1036,21 @@
 
   function onPointerUp(e) {
     if (!input.active || e.pointerId !== input.pointerId) return;
+    if (input.xyloControl) {
+      input.active = false;
+      input.pointerId = null;
+      input.xyloControl = false;
+      e.preventDefault();
+      return;
+    }
+    if (input.onXyloIcon) {
+      if (Game.state === 'playing' && !Game.xyloUsed && Game.xylo.state === 'idle') startXylo();
+      input.active = false;
+      input.pointerId = null;
+      input.onXyloIcon = false;
+      e.preventDefault();
+      return;
+    }
     if (input.onBrainButton) {
       if (Game.state === 'playing') {
         if (!Game.brainModeUsed) triggerBrainMode();
@@ -1024,6 +1087,8 @@
     input.active = false;
     input.pointerId = null;
     input.onBrainButton = false;
+    input.onXyloIcon = false;
+    input.xyloControl = false;
     input.isDashHold = false;
   }
 
@@ -1666,22 +1731,37 @@
       Game.brainButtonVisible = true;
       sfxBrainAppear();
     }
+    // El ícono del xilófono sale al llegar a los 8000m de altitud (no es
+    // por tiempo). Tampoco aparece en medio de una caída rápida.
+    if (!Game.xyloVisible && !Game.xyloUsed && Game.dash.state === 'idle' &&
+        Game.altitude <= CONFIG.XYLO_APPEAR_AT_ALTITUDE) {
+      Game.xyloVisible = true;
+      sfxBrainAppear();
+    }
     if (!Game.player.parachuteOpen) Game.windPhase = (Game.windPhase + dt * 1.8) % 1;
 
-    Game.spawnAccumulator += dt * 1000;
-    if (!Game.diploma && Game.spawnAccumulator >= currentSpawnInterval()) {
-      Game.spawnAccumulator = 0;
-      spawnWave();
+    var xyloActive = Game.xylo.state === 'active';
+
+    if (!xyloActive) {
+      Game.spawnAccumulator += dt * 1000;
+      if (!Game.diploma && Game.spawnAccumulator >= currentSpawnInterval()) {
+        Game.spawnAccumulator = 0;
+        spawnWave();
+      }
     }
 
     updatePlayer(dt);
-    updateEntities(dt);
+    updateXylo(dt);
     updateParticles(dt);
-    updateClouds(dt);
-    updateDiploma(dt);
     updatePartyMode(dt);
-    // Inmune mientras dura la caída rápida: los objetos no te afectan.
-    if (Game.dash.state === 'idle') checkCollisions();
+    if (!xyloActive) {
+      updateEntities(dt);
+      updateClouds(dt);
+      updateDiploma(dt);
+    }
+    // Inmune mientras dura la caída rápida o el xilófono: los objetos no
+    // te afectan (y durante el xilófono, de hecho, no queda ninguno).
+    if (Game.dash.state === 'idle' && !xyloActive) checkCollisions();
   }
 
   // ==== CAÍDA RÁPIDA (DASH): triple toque + mantener, un solo uso por partida ====
@@ -1747,6 +1827,103 @@
     if (Game.dash.state === 'active') cancelDash();
     else if (Game.dash.state === 'warning') resolveDashWarningSuccess();
     // en 'dying' ya no hay nada que hacer: perdiste el control.
+  }
+
+  // ==== XILÓFONO: minijuego de un solo uso, aparece fijo a los 30s ====
+  function getXyloIconPos() {
+    return { x: canvasWidth / 2, y: canvasHeight - 92 };
+  }
+
+  function isOnXyloIcon(clientX, clientY) {
+    if (!Game.xyloVisible || Game.xyloUsed || Game.xylo.state !== 'idle') return false;
+    var pos = getXyloIconPos();
+    var half = CONFIG.XYLO_ICON_SIZE / 2;
+    return Math.abs(clientX - pos.x) <= half && Math.abs(clientY - pos.y) <= half;
+  }
+
+  function startXylo() {
+    Game.xyloUsed = true;
+    Game.xylo.state = 'active';
+    Game.xylo.timer = CONFIG.XYLO_DURATION_S;
+    Game.xylo.playerPhase = 0;
+    Game.xylo.wandX = canvasWidth / 2;
+    Game.xylo.litKeyIndex = randInt(0, CONFIG.XYLO_KEY_COUNT - 1);
+    Game.xylo.bolts = [];
+    // "desaparece todo": limpia lo que había en pantalla y no entra nada
+    // nuevo mientras dura (ver el gate de spawnWave/updateEntities en update()).
+    Game.entities = [];
+    Game.diploma = null;
+    spawnFloatingText(canvasWidth / 2, canvasHeight * 0.42, '¡TOCÁ LA TECLA QUE SE ILUMINA!', '#ffe066');
+    sfxXyloStart();
+  }
+
+  function endXylo() {
+    Game.xylo.state = 'idle';
+    Game.xylo.bolts = [];
+  }
+
+  function updateXylo(dt) {
+    var x = Game.xylo;
+    if (x.state !== 'active') return;
+
+    // Rufo se mueve solo de un lado al otro; el jugador no lo controla
+    // mientras dura el minijuego (el toque maneja la varita, no a él).
+    x.playerPhase += dt;
+    Game.player.targetX = clamp(
+      canvasWidth / 2 + Math.sin(x.playerPhase * 1.4) * (canvasWidth * 0.32),
+      Game.player.width / 2, canvasWidth - Game.player.width / 2
+    );
+
+    for (var i = x.bolts.length - 1; i >= 0; i--) {
+      x.bolts[i].life -= dt;
+      if (x.bolts[i].life <= 0) x.bolts.splice(i, 1);
+    }
+
+    x.timer -= dt;
+    if (x.timer <= 0) endXylo();
+  }
+
+  function xyloKeyIndexAt(clientX) {
+    var idx = Math.floor(clientX / (canvasWidth / CONFIG.XYLO_KEY_COUNT));
+    return clamp(idx, 0, CONFIG.XYLO_KEY_COUNT - 1);
+  }
+
+  function xyloKeyCenterX(idx) {
+    var w = canvasWidth / CONFIG.XYLO_KEY_COUNT;
+    return w * idx + w / 2;
+  }
+
+  // Tocar cualquier parte de la pantalla mueve la varita a esa columna (no
+  // hace falta acertarle justo a la tecla dibujada abajo, igual que el
+  // arrastre normal no depende de la altura del toque).
+  function xyloKeyHeight() {
+    return Math.min(140, canvasHeight * 0.22);
+  }
+
+  function xyloKeyTap(clientX) {
+    var x = Game.xylo;
+    var idx = xyloKeyIndexAt(clientX);
+    var keyCenterX = xyloKeyCenterX(idx);
+    x.wandX = clientX; // la varita va exactamente donde tocás, no se pega al centro de la tecla
+    var keyY = canvasHeight - xyloKeyHeight() * 0.5;
+    var correct = idx === x.litKeyIndex;
+    if (correct) {
+      Game.score += CONFIG.XYLO_HIT_SCORE * Game.scoreMultiplier;
+      sfxXyloHit();
+    } else {
+      Game.score = Math.max(0, Game.score - CONFIG.XYLO_MISS_PENALTY);
+      sfxXyloMiss();
+    }
+    x.bolts.push({
+      x: keyCenterX, y: keyY,
+      px: Game.player.x, py: Game.player.y,
+      correct: correct, life: 0.28, maxLife: 0.28
+    });
+    var next = idx;
+    if (CONFIG.XYLO_KEY_COUNT > 1) {
+      while (next === idx) next = randInt(0, CONFIG.XYLO_KEY_COUNT - 1);
+    }
+    x.litKeyIndex = next;
   }
 
   // Bonus final por vidas que quedaron (siempre 0 en Game Over normal,
@@ -2250,6 +2427,221 @@
     }
   }
 
+  // Mini ícono de xilófono: unas barritas de colores de distinta altura,
+  // sencillo pero reconocible sin usar ningún archivo de imagen aparte.
+  function drawMiniXylophoneIcon(x, y, size) {
+    var colors = ['#ff5555', '#ffaa33', '#ffe066', '#66d97a', '#4fc3f7', '#7c6cff'];
+    var barW = size / colors.length;
+    ctx.save();
+    ctx.translate(x - size / 2, y - size * 0.35);
+    for (var i = 0; i < colors.length; i++) {
+      var h = size * (0.45 + 0.4 * Math.abs(Math.sin(i * 1.7)));
+      ctx.fillStyle = colors[i];
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(i * barW, size * 0.7 - h, barW - 2, h);
+      ctx.strokeRect(i * barW, size * 0.7 - h, barW - 2, h);
+    }
+    ctx.restore();
+  }
+
+  function renderXyloIcon() {
+    if (!Game.xyloVisible || Game.xyloUsed) return;
+    var pos = getXyloIconPos();
+    var pulse = 1 + Math.sin(Game.elapsedTime * 3) * 0.06;
+    drawHalo(pos.x, pos.y, CONFIG.XYLO_ICON_SIZE * 0.75 * pulse);
+    drawMiniXylophoneIcon(pos.x, pos.y, CONFIG.XYLO_ICON_SIZE * pulse);
+    ctx.save();
+    ctx.font = 'bold 12px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.strokeText('TOCAR', pos.x, pos.y + CONFIG.XYLO_ICON_SIZE * 0.62);
+    ctx.fillStyle = '#ffe066';
+    ctx.fillText('TOCAR', pos.x, pos.y + CONFIG.XYLO_ICON_SIZE * 0.62);
+    ctx.restore();
+  }
+
+  function hexToRgbComponents(hex) {
+    return parseInt(hex.slice(1, 3), 16) + ',' + parseInt(hex.slice(3, 5), 16) + ',' + parseInt(hex.slice(5, 7), 16);
+  }
+
+  // Halo de impacto genérico (a diferencia de drawHalo, que es siempre
+  // amarillo): se usa donde pega el rayo, con el color según acierto/error.
+  function drawImpactHalo(x, y, size, rgb) {
+    var grad = ctx.createRadialGradient(x, y, size * 0.1, x, y, size);
+    grad.addColorStop(0, 'rgba(' + rgb + ',0.8)');
+    grad.addColorStop(1, 'rgba(' + rgb + ',0)');
+    ctx.save();
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Rayo entre la tecla tocada y Rufo, con brillo (glow) y núcleo blanco
+  // para un look bien eléctrico, más un halo de impacto en la tecla y
+  // (si te equivocaste) uno más grande y dramático sobre Rufo.
+  function drawXyloBolt(bolt) {
+    var t = clamp(bolt.life / bolt.maxLife, 0, 1);
+    var color = bolt.correct ? '#7fe8ff' : '#ff5566';
+    var rgb = hexToRgbComponents(color);
+
+    ctx.save();
+    ctx.globalAlpha = t;
+    drawImpactHalo(bolt.x, bolt.y, bolt.correct ? 30 : 42, rgb);
+    if (!bolt.correct) drawImpactHalo(bolt.px, bolt.py, 56, rgb);
+
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 18;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = bolt.correct ? 4 : 6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    var segments = 7;
+    for (var i = 0; i <= segments; i++) {
+      var f = i / segments;
+      var jitter = (Math.random() - 0.5) * 16 * Math.sin(f * Math.PI);
+      var px = bolt.x + (bolt.px - bolt.x) * f + jitter;
+      var py = bolt.y + (bolt.py - bolt.y) * f;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Varita dibujada a mano (no todos los dispositivos tienen el emoji 🪄):
+  // un palito con una estrellita brillante en la punta.
+  function drawWandIcon(x, y, size) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.strokeStyle = '#7a5230';
+    ctx.lineWidth = size * 0.12;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.35, size * 0.35);
+    ctx.lineTo(size * 0.3, -size * 0.3);
+    ctx.stroke();
+    var tipX = size * 0.38, tipY = -size * 0.38;
+    var spikes = 4, outerR = size * 0.22, innerR = size * 0.09;
+    ctx.fillStyle = '#ffe066';
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (var i = 0; i < spikes * 2; i++) {
+      var r = i % 2 === 0 ? outerR : innerR;
+      var a = (Math.PI / spikes) * i - Math.PI / 2;
+      var px = tipX + Math.cos(a) * r;
+      var py = tipY + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Camino con forma de "barra de xilófono": rectángulo con las dos puntas
+  // bien redondeadas (cápsula), como las láminas de metal reales.
+  function tracePillBar(x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.closePath();
+  }
+
+  // Versión apagada/grisácea de un color, para las teclas que no están
+  // iluminadas (bien opacas, en contraste con el neón de la que sí).
+  function grayedOutColor(hex) {
+    var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    var gray = (r + g + b) / 3;
+    var mix = 0.6;
+    return 'rgb(' + Math.round(r * (1 - mix) + gray * mix) + ',' +
+      Math.round(g * (1 - mix) + gray * mix) + ',' +
+      Math.round(b * (1 - mix) + gray * mix) + ')';
+  }
+
+  function renderXylophone() {
+    var x = Game.xylo;
+    var keyCount = CONFIG.XYLO_KEY_COUNT;
+    var slotW = canvasWidth / keyCount;
+    var barW = slotW * 0.62;
+    var keyH = xyloKeyHeight();
+    var baseY = canvasHeight - keyH;
+    var barR = barW * 0.34;
+    var palette = ['#e63946', '#f4845f', '#f1c40f', '#2ecc71', '#17bebb', '#4d96ff', '#8e5cff', '#ff5cad'];
+    var noteLabels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'A'];
+
+    ctx.save();
+    // dos rieles de madera por detrás, donde "se apoyan" las teclas
+    var railH = 9;
+    ctx.fillStyle = '#8a5a34';
+    ctx.strokeStyle = '#5c3a1f';
+    ctx.lineWidth = 2;
+    var rail1Y = baseY + keyH * 0.26;
+    var rail2Y = baseY + keyH * 0.74;
+    ctx.fillRect(0, rail1Y - railH / 2, canvasWidth, railH);
+    ctx.strokeRect(0, rail1Y - railH / 2, canvasWidth, railH);
+    ctx.fillRect(0, rail2Y - railH / 2, canvasWidth, railH);
+    ctx.strokeRect(0, rail2Y - railH / 2, canvasWidth, railH);
+
+    for (var i = 0; i < keyCount; i++) {
+      var cx = slotW * i + slotW / 2;
+      var barX = cx - barW / 2;
+      var lit = i === x.litKeyIndex;
+      var baseColor = palette[i % palette.length];
+
+      ctx.save();
+      if (lit) {
+        ctx.shadowColor = baseColor;
+        ctx.shadowBlur = 22 + 6 * Math.sin(Game.elapsedTime * 12);
+        ctx.fillStyle = baseColor;
+      } else {
+        ctx.fillStyle = grayedOutColor(baseColor);
+      }
+      tracePillBar(barX, baseY, barW, keyH, barR);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = lit ? '#ffffff' : 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = lit ? 3 : 2;
+      ctx.stroke();
+      ctx.restore();
+
+      // agujeritos arriba y abajo, como los de una barra de xilófono real
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.beginPath();
+      ctx.arc(cx, baseY + keyH * 0.16, barW * 0.13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cx, baseY + keyH * 0.84, barW * 0.13, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.font = 'bold 15px "Courier New", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = lit ? '#ffffff' : 'rgba(255,255,255,0.5)';
+      ctx.fillText(noteLabels[i % noteLabels.length], cx, baseY + keyH * 0.5);
+    }
+    ctx.restore();
+
+    for (var b = 0; b < x.bolts.length; b++) drawXyloBolt(x.bolts[b]);
+    drawWandIcon(x.wandX, baseY - 16, 38);
+  }
+
   function renderEntities() {
     for (var i = 0; i < Game.entities.length; i++) {
       var e = Game.entities[i];
@@ -2370,11 +2762,12 @@
 
   function render() {
     var dashing = Game.dash.state !== 'idle';
+    var xyloActive = Game.xylo.state === 'active';
     renderBackground();
     if (dashing) {
       // En caída rápida no hay nubes ni objetos: solo rayas de velocidad.
       renderDashSpeedLines();
-    } else {
+    } else if (!xyloActive) {
       renderClouds();
       renderEntities();
       renderDiploma();
@@ -2382,7 +2775,9 @@
     drawPlayer();
     if (Game.dash.state === 'warning') renderDashWarningBanner();
     if (Game.brainModeHaloTimer > 0) renderBrainSweep();
-    if (Game.state === 'playing' && !dashing) renderBrainButton();
+    if (Game.state === 'playing' && !dashing && !xyloActive) renderBrainButton();
+    if (xyloActive) renderXylophone();
+    else if (Game.state === 'playing' && !dashing) renderXyloIcon();
     renderParticles();
     renderFlash();
   }
