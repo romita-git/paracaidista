@@ -127,6 +127,49 @@
     box-shadow: 4px 4px 0 #000;
   }
   .overlay button:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 #000; }
+  #feedbackBox {
+    margin-top: 22px;
+    width: min(320px, 82vw);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: stretch;
+    padding-top: 14px;
+    border-top: 2px dashed rgba(255,255,255,.25);
+  }
+  #feedbackBox label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    opacity: .8;
+  }
+  #feedbackInput {
+    font-family: inherit;
+    font-size: 14px;
+    padding: 10px;
+    border: 3px solid #222;
+    background: #fff;
+    color: #222;
+    resize: none;
+    min-height: 56px;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  #btnFeedbackSend {
+    padding: 10px 20px !important;
+    font-size: 13px !important;
+    background: #6fd1ff !important;
+    margin-top: 0 !important;
+  }
+  #btnFeedbackSend:disabled { opacity: .6; }
+  #feedbackStatus {
+    font-size: 12px;
+    min-height: 14px;
+    margin: 0;
+    opacity: .9;
+    text-transform: none;
+    letter-spacing: normal;
+  }
   #startSprite {
     width: min(260px, 62vw);
     height: auto;
@@ -190,6 +233,12 @@
   <h1 id="overlayTitle">Game Over</h1>
   <p id="finalScoreText"></p>
   <button id="btnRetry">Reintentar</button>
+  <div id="feedbackBox">
+    <label for="feedbackInput">¿Qué le agregarías al juego?</label>
+    <textarea id="feedbackInput" placeholder="Ej: un power-up que te haga invencible 5 segundos" maxlength="300"></textarea>
+    <button id="btnFeedbackSend">Enviar sugerencia</button>
+    <p id="feedbackStatus"></p>
+  </div>
 </div>
 
 <div id="overlayStart" class="overlay visible">
@@ -318,6 +367,9 @@
   var overlayTitleEl = document.getElementById('overlayTitle');
   var finalScoreTextEl = document.getElementById('finalScoreText');
   var btnRetryEl = document.getElementById('btnRetry');
+  var feedbackInputEl = document.getElementById('feedbackInput');
+  var btnFeedbackSendEl = document.getElementById('btnFeedbackSend');
+  var feedbackStatusEl = document.getElementById('feedbackStatus');
   var overlayStartEl = document.getElementById('overlayStart');
   var startSpriteEl = document.getElementById('startSprite');
   var btnStartEl = document.getElementById('btnStart');
@@ -771,6 +823,41 @@
   btnRetryEl.addEventListener('click', function () {
     resetGame();
   });
+
+  // ==== FEEDBACK: sugerencias para la próxima versión, van a un Google Form ====
+  var FEEDBACK_FORM_ID = '1FAIpQLSdVe9Hcn7IKdLQjqv1ut3qqLt_Lc3RcswNrSBnIgJKhZwPNEA';
+  var FEEDBACK_ENTRY = 'entry.1033437093';
+
+  function resetFeedbackBox() {
+    feedbackInputEl.value = '';
+    feedbackStatusEl.textContent = '';
+    btnFeedbackSendEl.disabled = false;
+  }
+
+  function sendFeedback() {
+    var text = feedbackInputEl.value.trim();
+    if (!text) return;
+    btnFeedbackSendEl.disabled = true;
+    feedbackStatusEl.textContent = 'Enviando...';
+    var body = new URLSearchParams();
+    body.set(FEEDBACK_ENTRY, text);
+    // no-cors: no podemos leer la respuesta, pero Google igual la recibe;
+    // el .then/.catch acá solo distingue "se mandó" de "sin conexión".
+    fetch('https://docs.google.com/forms/d/e/' + FEEDBACK_FORM_ID + '/formResponse', {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString()
+    }).then(function () {
+      feedbackStatusEl.textContent = '¡Gracias! 🧠';
+      feedbackInputEl.value = '';
+    }).catch(function () {
+      feedbackStatusEl.textContent = 'No se pudo enviar (revisá tu conexión)';
+      btnFeedbackSendEl.disabled = false;
+    });
+  }
+
+  btnFeedbackSendEl.addEventListener('click', sendFeedback);
 
   // Pantalla de inicio: portada del juego, fija (ya no cicla sprites).
   startSpriteEl.src = 'Portada%20juego.JPG';
@@ -1251,6 +1338,7 @@
     var altRemaining = Math.max(0, Math.round(Game.altitude));
     finalScoreTextEl.textContent = 'Te quedaste a ' + altRemaining.toLocaleString('es-AR') + ' m del piso · Score: ' + Math.floor(Game.score);
     overlayGameOverEl.classList.add('visible');
+    resetFeedbackBox();
     syncMusic();
   }
 
@@ -1260,6 +1348,7 @@
     overlayTitleEl.textContent = '¡Aterrizaste!';
     finalScoreTextEl.textContent = 'Llegaste al piso en ' + Math.floor(Game.elapsedTime) + ' s · Score: ' + Math.floor(Game.score);
     overlayGameOverEl.classList.add('visible');
+    resetFeedbackBox();
     syncMusic();
   }
 
