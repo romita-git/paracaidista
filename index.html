@@ -91,7 +91,7 @@
     align-items: center;
     justify-content: center;
     gap: 16px;
-    background: rgba(0,0,0,0.85);
+    background: #000;
     color: #fff;
     z-index: 20;
     text-align: center;
@@ -180,8 +180,29 @@
     border: 3px solid #222;
     box-shadow: 4px 4px 0 #000;
   }
-  #overlayStart {
-    background: #000;
+  #btnFaq {
+    margin-top: 4px !important;
+    padding: 8px 18px !important;
+    font-size: 12px !important;
+    background: transparent !important;
+    color: #fff !important;
+    border: 2px solid rgba(255,255,255,.5) !important;
+    box-shadow: none !important;
+  }
+  #faqContent {
+    max-width: min(360px, 86vw);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    text-align: left;
+  }
+  #faqContent p {
+    margin: 0;
+    font-size: 14px;
+    text-transform: none;
+    letter-spacing: normal;
+    line-height: 1.4;
+    opacity: 1;
   }
   #startTitle {
     font-size: 26px;
@@ -229,7 +250,7 @@
   <div id="altBarGround">🟫</div>
 </div>
 
-<div id="startHint">Arrastrá para moverte · Toque corto: abrir/cerrar paracaídas</div>
+<div id="startHint">Arrastrá para moverte · Toque: paracaídas · Triple toque: caída libre</div>
 
 <div id="overlayGameOver" class="overlay">
   <h1 id="overlayTitle">Game Over</h1>
@@ -247,6 +268,19 @@
   <h1 id="startTitle">RUFFUS ADVENTURES</h1>
   <img id="startSprite" alt="Paracaidista">
   <button id="btnStart">Saltar</button>
+  <button id="btnFaq">¿Cómo se juega?</button>
+</div>
+
+<div id="overlayFaq" class="overlay">
+  <h1>¿Cómo se juega?</h1>
+  <div id="faqContent">
+    <p>🕹️ Arrastrá el dedo para moverte a los costados.</p>
+    <p>🪂 Toque corto: abrís o cerrás el paracaídas (frena la caída).</p>
+    <p>⚡ Triple toque y mantené apretado: caída libre a toda velocidad. Es de un solo uso por partida y arriesgado: si no soltás a tiempo cuando aparece el cartel, te estrellás.</p>
+    <p>🧠 El cerebrito aparece solo, arriba de tu cabeza: tocalo para limpiar la pantalla de obstáculos. También de un solo uso.</p>
+    <p>🟢 Los objetos con halo verde te curan. Esquivá el resto.</p>
+  </div>
+  <button id="btnFaqClose">Entendido</button>
 </div>
 
 <script>
@@ -391,6 +425,9 @@
   var overlayStartEl = document.getElementById('overlayStart');
   var startSpriteEl = document.getElementById('startSprite');
   var btnStartEl = document.getElementById('btnStart');
+  var btnFaqEl = document.getElementById('btnFaq');
+  var overlayFaqEl = document.getElementById('overlayFaq');
+  var btnFaqCloseEl = document.getElementById('btnFaqClose');
 
   var Game = null; // se crea en resetGame()
   var canvasWidth = 0, canvasHeight = 0, dpr = 1;
@@ -964,6 +1001,15 @@
     MusicEngine.start('intro');
   }
   overlayStartEl.addEventListener('pointerdown', startIntroMusicOnce, { passive: true });
+
+  btnFaqEl.addEventListener('click', function () {
+    overlayStartEl.classList.remove('visible');
+    overlayFaqEl.classList.add('visible');
+  });
+  btnFaqCloseEl.addEventListener('click', function () {
+    overlayFaqEl.classList.remove('visible');
+    overlayStartEl.classList.add('visible');
+  });
 
   btnStartEl.addEventListener('click', function () {
     overlayStartEl.classList.remove('visible');
