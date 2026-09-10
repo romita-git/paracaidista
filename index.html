@@ -851,7 +851,7 @@
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString()
     }).then(function () {
-      feedbackStatusEl.textContent = '¡Gracias! 🧠';
+      feedbackStatusEl.textContent = 'GRACIAS RUFFUSTASTICO!! 🧠';
       feedbackInputEl.value = '';
     }).catch(function () {
       feedbackStatusEl.textContent = 'No se pudo enviar (revisá tu conexión)';
@@ -1670,6 +1670,23 @@
     ctx.restore();
   }
 
+  // Halo verde tipo "vida": exclusivo de los objetos que curan (kind
+  // 'heal'), más grande y saturado que el halo genérico para que de un
+  // vistazo se entienda que ese objeto es bueno y conviene agarrarlo.
+  function drawHealHalo(x, y, size) {
+    var r = size * 1.15;
+    var grad = ctx.createRadialGradient(x, y, size * 0.15, x, y, r);
+    grad.addColorStop(0, 'rgba(120,255,150,0.8)');
+    grad.addColorStop(0.55, 'rgba(120,255,150,0.35)');
+    grad.addColorStop(1, 'rgba(120,255,150,0)');
+    ctx.save();
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   // Halo de luz pulsante del modo cerebrito: crece y se desvanece a lo
   // largo de BRAIN_MODE_HALO_DURATION, centrado en el jugador.
   // Barrido del modo cerebrito: anillos concéntricos que nacen en el
@@ -1759,7 +1776,7 @@
       var def = ITEM_DEFS[e.type];
       // Los objetos buenos (los que dan vida) llevan un halo para que se
       // distingan de un vistazo de los que hacen daño.
-      if (def.kind === 'heal') drawHalo(e.x + wob, e.y, CONFIG.OBJECT_SIZE);
+      if (def.kind === 'heal') drawHealHalo(e.x + wob, e.y, CONFIG.OBJECT_SIZE);
       if (e.type === 'wardrobe') {
         drawWardrobeIcon(e.x + wob, e.y, CONFIG.OBJECT_SIZE);
       } else {
