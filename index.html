@@ -215,6 +215,23 @@
     return { x: x, y: y, vy: -55, life: 1.6, maxLife: 1.6, text: text, color: color };
   }
 
+  function createConfettiParticle(x, y, color) {
+    var angle = randRange(0, Math.PI * 2);
+    var speed = randRange(60, 160);
+    var life = randRange(0.8, 1.3);
+    return {
+      x: x, y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 40,
+      life: life, maxLife: life,
+      kind: 'confetti',
+      color: color,
+      size: randRange(4, 7),
+      rot: randRange(0, Math.PI * 2),
+      rotSpeed: randRange(-6, 6)
+    };
+  }
+
   function createCloud(y) {
     return {
       x: randRange(-40, canvasWidth + 40),
@@ -249,6 +266,7 @@
       bgHueTime: 0,
       player: createPlayer()
     };
+    MusicEngine.stop();
     overlayGameOverEl.classList.remove('visible');
   }
 
@@ -304,6 +322,68 @@
     playTone(320, 0.1, 'sine', 0.12);
   }
 
+  // Música de fondo por modo: un secuenciador simple (setTimeout con
+  // Web Audio) que repite un patrón corto de notas. Solo un track suena
+  // a la vez; empieza/para según el modo activo (fiesta o paracaídas).
+  var MusicEngine = (function () {
+    var TRACKS = {
+      party: {
+        stepTime: 0.15,
+        steps: [
+          { bass: 220.00, lead: 659.25 },
+          { bass: 220.00, lead: 0 },
+          { bass: 277.18, lead: 783.99 },
+          { bass: 220.00, lead: 0 },
+          { bass: 329.63, lead: 659.25 },
+          { bass: 220.00, lead: 0 },
+          { bass: 277.18, lead: 587.33 },
+          { bass: 220.00, lead: 0 }
+        ]
+      },
+      parachute: {
+        stepTime: 0.55,
+        steps: [
+          { bass: 196.00, lead: 392.00 },
+          { bass: 0, lead: 0 },
+          { bass: 220.00, lead: 440.00 },
+          { bass: 0, lead: 0 }
+        ]
+      }
+    };
+
+    var current = null;
+    var stepIndex = 0;
+    var timerId = null;
+
+    function playStep(track, step) {
+      if (step.bass) playTone(step.bass, track.stepTime * 0.9, 'triangle', 0.07);
+      if (step.lead) playTone(step.lead, track.stepTime * 0.7, 'sine', 0.05, track.stepTime * 0.05);
+    }
+
+    function tick() {
+      var track = TRACKS[current];
+      if (!track) return;
+      playStep(track, track.steps[stepIndex]);
+      stepIndex = (stepIndex + 1) % track.steps.length;
+      timerId = setTimeout(tick, track.stepTime * 1000);
+    }
+
+    function start(name) {
+      if (current === name) return;
+      stop();
+      current = name;
+      stepIndex = 0;
+      tick();
+    }
+
+    function stop() {
+      current = null;
+      if (timerId) { clearTimeout(timerId); timerId = null; }
+    }
+
+    return { start: start, stop: stop };
+  })();
+
   // ==== 3. INPUT (Pointer Events, distinguir tap vs drag) ====
   var input = {
     active: false,
@@ -343,6 +423,13 @@
     if (isTap && Game.state === 'playing') {
       Game.player.parachuteOpen = !Game.player.parachuteOpen;
       sfxParachute();
+      // La música de paracaídas no interrumpe la de modo fiesta si ambas
+      // coinciden (la fiesta manda); se retoma al terminar la fiesta en
+      // exitPartyMode() si el paracaídas sigue abierto.
+      if (Game.mode !== 'party') {
+        if (Game.player.parachuteOpen) MusicEngine.start('parachute');
+        else MusicEngine.stop();
+      }
     }
     input.active = false;
     input.pointerId = null;
@@ -376,6 +463,15 @@
     if (Game && Game.player) {
       Game.player.x = clamp(Game.player.x, Game.player.width / 2, canvasWidth - Game.player.width / 2);
       Game.player.targetX = clamp(Game.player.targetX, Game.player.width / 2, canvasWidth - Game.player.width / 2);
+    }
+    // BUG: si el resize/cambio de orientación reduce mucho el ancho, una nube
+    // que quedó con x fuera del nuevo canvasWidth solo se reubica cuando el
+    // ciclo vertical la recicla (puede tardar). Se re-clampea acá para que
+    // ninguna nube quede varada fuera de pantalla tras un resize.
+    if (Game && Game.clouds) {
+      for (var i = 0; i < Game.clouds.length; i++) {
+        Game.clouds[i].x = clamp(Game.clouds[i].x, -40, canvasWidth + 40);
+      }
     }
   }
   window.addEventListener('resize', resizeCanvas);
@@ -462,6 +558,14 @@
     Game.particles.push(createTextParticle(x, y - 6, text, color));
   }
 
+  var CONFETTI_COLORS = ['#e63946', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#ff8fab'];
+  function spawnConfetti(x, y) {
+    var n = randInt(10, 14);
+    for (var i = 0; i < n; i++) {
+      Game.particles.push(createConfettiParticle(x, y, pickOneOf(CONFETTI_COLORS)));
+    }
+  }
+
   function enterPartyMode() {
     var duration = randRange(CONFIG.PARTY_MODE_DURATION_MIN, CONFIG.PARTY_MODE_DURATION_MAX);
     if (Game.mode === 'party') {
@@ -481,6 +585,10 @@
   function exitPartyMode() {
     Game.mode = 'normal';
     Game.scoreMultiplier = 1;
+    // Si el paracaídas seguía abierto durante la fiesta, retoma su propia
+    // música al volver al modo normal; si no, corta toda música.
+    if (Game.player.parachuteOpen) MusicEngine.start('parachute');
+    else MusicEngine.stop();
   }
 
   function resolveCollision(item) {
@@ -508,6 +616,9 @@
       case 'partyTrigger':
         enterPartyMode();
         sfxPartyTrigger();
+        spawnFloatingText(item.x, item.y, '¡Saliendo del clóset!', '#ffffff');
+        spawnConfetti(item.x, item.y);
+        MusicEngine.start('party');
         break;
       case 'partyBonus':
         Game.score += CONFIG.PARTY_BONUS_SCORE * Game.scoreMultiplier;
@@ -561,6 +672,11 @@
   function updateParticles(dt) {
     for (var i = Game.particles.length - 1; i >= 0; i--) {
       var pt = Game.particles[i];
+      if (pt.kind === 'confetti') {
+        pt.vy += 90 * dt; // gravedad leve para que caigan como confeti real
+        pt.rot += pt.rotSpeed * dt;
+        pt.x += pt.vx * dt;
+      }
       pt.y += pt.vy * dt;
       pt.life -= dt;
       if (pt.life <= 0) Game.particles.splice(i, 1);
@@ -610,6 +726,7 @@
   function triggerGameOver() {
     Game.state = 'gameover';
     sfxGameOver();
+    MusicEngine.stop();
     finalScoreTextEl.textContent = 'Sobreviviste ' + Math.floor(Game.elapsedTime) + ' segundos · Score: ' + Math.floor(Game.score);
     overlayGameOverEl.classList.add('visible');
   }
@@ -671,14 +788,20 @@
     ctx.translate(c.x, c.y);
     ctx.scale(c.scale, c.scale);
     ctx.globalAlpha = c.opacity;
-    ctx.fillStyle = '#ffffff';
     ctx.beginPath();
     ctx.ellipse(0, 0, 34, 20, 0, 0, Math.PI * 2);
     ctx.ellipse(-26, 6, 22, 15, 0, 0, Math.PI * 2);
     ctx.ellipse(28, 8, 24, 16, 0, 0, Math.PI * 2);
     ctx.ellipse(-6, -14, 24, 18, 0, 0, Math.PI * 2);
     ctx.ellipse(18, -10, 20, 15, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
     ctx.fill();
+    // Contorno sutil para que la nube se siga viendo contra cualquier fondo
+    // (incluido el modo fiesta, donde el fondo rota de color y puede quedar
+    // muy claro y "comerse" el blanco de la nube).
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(90,110,140,0.3)';
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -694,6 +817,58 @@
     playerSpriteImg.onload = function () { playerSpriteLoaded = true; };
     playerSpriteImg.onerror = function () { playerSpriteLoaded = false; };
     playerSpriteImg.src = PLAYER_SPRITE_URL;
+  }
+
+  // No existe un emoji de "ropero/armario" en Unicode (🚪 es solo una
+  // puerta), así que el disparador del modo fiesta se dibuja como ícono
+  // vectorial propio en vez de con drawEmoji().
+  function roundRectPath(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  function drawWardrobeIcon(x, y, size) {
+    var w = size * 0.72, h = size * 0.92;
+    ctx.save();
+    ctx.translate(x, y);
+
+    ctx.fillStyle = '#8a5a34';
+    roundRectPath(-w / 2, -h / 2, w, h, 4);
+    ctx.fill();
+    ctx.strokeStyle = '#5c3a1e';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = '#6b4423';
+    ctx.fillRect(-w / 2 - 2, -h / 2 - 4, w + 4, 5);
+
+    ctx.strokeStyle = '#5c3a1e';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -h / 2 + 4);
+    ctx.lineTo(0, h / 2 - 4);
+    ctx.stroke();
+
+    ctx.fillStyle = '#f1c40f';
+    ctx.beginPath();
+    ctx.arc(-w * 0.12, 0, 2, 0, Math.PI * 2);
+    ctx.arc(w * 0.12, 0, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#5c3a1e';
+    ctx.fillRect(-w / 2 + 2, h / 2, 3, 4);
+    ctx.fillRect(w / 2 - 5, h / 2, 3, 4);
+
+    ctx.restore();
   }
 
   var PARACHUTE_PANEL_COLORS = ['#e63946', '#f4f1de', '#e63946', '#f4f1de', '#e63946', '#f4f1de'];
@@ -781,7 +956,11 @@
     for (var i = 0; i < Game.entities.length; i++) {
       var e = Game.entities[i];
       var wob = Math.sin(e.wobble) * 4;
-      drawEmoji(ITEM_DEFS[e.type].emoji, e.x + wob, e.y, CONFIG.OBJECT_SIZE);
+      if (e.type === 'wardrobe') {
+        drawWardrobeIcon(e.x + wob, e.y, CONFIG.OBJECT_SIZE);
+      } else {
+        drawEmoji(ITEM_DEFS[e.type].emoji, e.x + wob, e.y, CONFIG.OBJECT_SIZE);
+      }
     }
   }
 
@@ -791,7 +970,12 @@
       var a = clamp(pt.life / pt.maxLife, 0, 1);
       ctx.save();
       ctx.globalAlpha = a;
-      if (pt.text) {
+      if (pt.kind === 'confetti') {
+        ctx.translate(pt.x, pt.y);
+        ctx.rotate(pt.rot);
+        ctx.fillStyle = pt.color;
+        ctx.fillRect(-pt.size / 2, -pt.size / 2, pt.size, pt.size);
+      } else if (pt.text) {
         ctx.font = 'bold 15px system-ui, -apple-system, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -819,7 +1003,7 @@
     var lives = Math.max(0, Game.lives);
     hudLivesEl.textContent = '❤️'.repeat(lives) + '🖤'.repeat(CONFIG.PLAYER_MAX_LIVES - lives);
     var s = Math.floor(Game.score);
-    hudScoreEl.textContent = Game.mode === 'party' ? (s + ' 🎉x2') : (s + '');
+    hudScoreEl.textContent = Game.mode === 'party' ? (s + ' 🏳️‍🌈x2') : (s + '');
   }
 
   // ==== 9. MAIN LOOP ====
