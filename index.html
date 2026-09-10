@@ -304,6 +304,7 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
+<audio id="partyThemeAudio" src="tema.mp3" loop preload="auto"></audio>
 
 <div id="hud">
   <div id="hudLives">❤️❤️❤️</div>
@@ -792,9 +793,12 @@
   }
   // Nota correcta: un "ding" limpio, distinto en cada tecla para que se
   // sienta como tocar de verdad.
-  function sfxXyloHit() {
-    var notes = [392, 440, 493.88, 523.25, 587.33, 659.25, 739.99, 783.99];
-    playTone(notes[randInt(0, notes.length - 1)], 0.14, 'sine', 0.2);
+  // Escala de Do a Do (una octava), de grave a agudo según la tecla (índice
+  // 0 = la más a la izquierda = la más grave), como un xilófono de verdad.
+  var XYLO_NOTES = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25];
+  function sfxXyloHit(keyIndex) {
+    var freq = XYLO_NOTES[keyIndex % XYLO_NOTES.length];
+    playTone(freq, 0.16, 'triangle', 0.22);
   }
   // Nota incorrecta: buzz corto y sordo.
   function sfxXyloMiss() {
@@ -926,12 +930,28 @@
     return { start: start, stop: stop };
   })();
 
+  // Tema real (archivo de audio) para el modo fiesta/ropero, en vez del
+  // track sintetizado.
+  var partyThemeAudioEl = document.getElementById('partyThemeAudio');
+  function startPartyTheme() {
+    try {
+      partyThemeAudioEl.currentTime = 0;
+      partyThemeAudioEl.volume = 0.6;
+      var p = partyThemeAudioEl.play();
+      if (p && p.catch) p.catch(function () {});
+    } catch (err) {}
+  }
+  function stopPartyTheme() {
+    try { partyThemeAudioEl.pause(); } catch (err) {}
+  }
+
   // Único punto de decisión de qué suena: fiesta > paracaídas abierto >
   // viento (por defecto). Se llama en cada transición de estado relevante
   // en vez de duplicar la lógica de prioridad en cada lugar.
   function syncMusic() {
-    if (Game.state !== 'playing') { MusicEngine.stop(); stopWind(); return; }
-    if (Game.mode === 'party') { stopWind(); MusicEngine.start('party'); return; }
+    if (Game.state !== 'playing') { MusicEngine.stop(); stopWind(); stopPartyTheme(); return; }
+    if (Game.mode === 'party') { stopWind(); MusicEngine.stop(); startPartyTheme(); return; }
+    stopPartyTheme();
     if (Game.player.parachuteOpen) { stopWind(); MusicEngine.start('parachute'); return; }
     MusicEngine.stop();
     startWind();
@@ -1909,7 +1929,7 @@
     var correct = idx === x.litKeyIndex;
     if (correct) {
       Game.score += CONFIG.XYLO_HIT_SCORE * Game.scoreMultiplier;
-      sfxXyloHit();
+      sfxXyloHit(idx);
     } else {
       Game.score = Math.max(0, Game.score - CONFIG.XYLO_MISS_PENALTY);
       sfxXyloMiss();
@@ -2584,7 +2604,7 @@
     var baseY = canvasHeight - keyH;
     var barR = barW * 0.34;
     var palette = ['#e63946', '#f4845f', '#f1c40f', '#2ecc71', '#17bebb', '#4d96ff', '#8e5cff', '#ff5cad'];
-    var noteLabels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'A'];
+    var noteLabels = ['C', 'D', 'E', 'F', 'G', 'A', 'B', 'C'];
 
     ctx.save();
     // dos rieles de madera por detrás, donde "se apoyan" las teclas
