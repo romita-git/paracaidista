@@ -983,7 +983,7 @@
 
   function isOnBrainButton(clientX, clientY) {
     if (!Game.player || !Game.brainButtonVisible || Game.brainButtonGone || Game.brainButtonFadeTimer > 0) return false;
-    if (Game.dash.state !== 'idle') return false;
+    if (Game.dash.state !== 'idle' || Game.mode === 'party') return false;
     var pos = getBrainButtonPos();
     var half = CONFIG.BRAIN_BUTTON_SIZE / 2;
     return Math.abs(clientX - pos.x) <= half && Math.abs(clientY - pos.y) <= half;
@@ -1129,7 +1129,7 @@
   // OJO: hasta reemplazar esto por la URL real del Apps Script (ver
   // instrucciones), el ranking queda inerte (no rompe el juego, solo no
   // guarda ni muestra nada).
-  var LEADERBOARD_URL = 'REEMPLAZAR_CON_TU_URL_DE_APPS_SCRIPT';
+  var LEADERBOARD_URL = 'https://script.google.com/macros/s/AKfycbxaznvcrTCYjkftpx7cBE8pEuyg_lB77taLQaFSMOrZ20NF6ExmaAzgFWvwYokvgLJgCA/exec';
   var PLAYER_NAME_KEY = 'ruffus_player_name';
   var lastRunScore = 0;
   var lastRunOutcome = '';
@@ -1745,16 +1745,18 @@
     }
     // El botón del cerebrito no está desde el arranque: recién sale entre
     // los 10 y 20s de partida (brainButtonAppearAt, sorteado en resetGame).
-    // Nunca aparece en medio de una caída rápida.
+    // Nunca aparece en medio de una caída rápida ni del modo ropero/fiesta:
+    // cada modo especial es independiente, no se pisan entre sí.
     if (!Game.brainButtonVisible && !Game.brainModeUsed && Game.dash.state === 'idle' &&
-        Game.elapsedTime >= Game.brainButtonAppearAt) {
+        Game.mode !== 'party' && Game.elapsedTime >= Game.brainButtonAppearAt) {
       Game.brainButtonVisible = true;
       sfxBrainAppear();
     }
     // El ícono del xilófono sale al llegar a los 8000m de altitud (no es
-    // por tiempo). Tampoco aparece en medio de una caída rápida.
+    // por tiempo). Tampoco aparece en medio de una caída rápida ni del
+    // modo ropero/fiesta.
     if (!Game.xyloVisible && !Game.xyloUsed && Game.dash.state === 'idle' &&
-        Game.altitude <= CONFIG.XYLO_APPEAR_AT_ALTITUDE) {
+        Game.mode !== 'party' && Game.altitude <= CONFIG.XYLO_APPEAR_AT_ALTITUDE) {
       Game.xyloVisible = true;
       sfxBrainAppear();
     }
@@ -1856,6 +1858,7 @@
 
   function isOnXyloIcon(clientX, clientY) {
     if (!Game.xyloVisible || Game.xyloUsed || Game.xylo.state !== 'idle') return false;
+    if (Game.mode === 'party') return false;
     var pos = getXyloIconPos();
     var half = CONFIG.XYLO_ICON_SIZE / 2;
     return Math.abs(clientX - pos.x) <= half && Math.abs(clientY - pos.y) <= half;
@@ -2795,9 +2798,9 @@
     drawPlayer();
     if (Game.dash.state === 'warning') renderDashWarningBanner();
     if (Game.brainModeHaloTimer > 0) renderBrainSweep();
-    if (Game.state === 'playing' && !dashing && !xyloActive) renderBrainButton();
+    if (Game.state === 'playing' && !dashing && !xyloActive && Game.mode !== 'party') renderBrainButton();
     if (xyloActive) renderXylophone();
-    else if (Game.state === 'playing' && !dashing) renderXyloIcon();
+    else if (Game.state === 'playing' && !dashing && Game.mode !== 'party') renderXyloIcon();
     renderParticles();
     renderFlash();
   }
