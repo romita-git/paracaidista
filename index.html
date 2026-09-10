@@ -15,11 +15,17 @@
     touch-action: none;
     -webkit-user-select: none;
     user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
     font-family: 'Courier New', ui-monospace, monospace;
   }
   #gameCanvas {
     display: block;
     touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
     width: 100vw;
     height: 100vh;
   }
@@ -339,8 +345,8 @@
     PERIMETRAL_CHANCE: 0.035,    // probabilidad de que una oleada incluya al perimetral
     CHICKENMAN_CHANCE: 0.04,     // probabilidad de que una oleada incluya al hombre pollo
 
-    TAP_MAX_DURATION_MS: 220,
-    TAP_MAX_MOVE_PX: 14,
+    TAP_MAX_DURATION_MS: 260,
+    TAP_MAX_MOVE_PX: 20,          // margen generoso: en el dedo real de un celular un "toque" se mueve más que con mouse
 
     INVULNERABLE_TIME: 1.0,      // segundos de i-frames tras recibir daño
     PARTY_BONUS_SCORE: 40,
@@ -371,7 +377,8 @@
 
     // Caída rápida (dash): triple toque y mantener para tirarse en picada.
     // Un solo uso por partida (como el cerebrito).
-    DASH_TAP_WINDOW_MS: 550,     // ventana máxima entre toques para que cuenten como parte del combo
+    DASH_TAP_WINDOW_MS: 900,     // ventana máxima entre toques para que cuenten como parte del combo (generosa: en el celular el ritmo real es más lento que con mouse)
+    DASH_MISFIRE_GRACE_MS: 180,  // si soltás casi al instante del 3er toque (no lo mantuviste) no se gasta el único uso
     DASH_DESCENT_RATE: 500,      // m/seg durante el dash (1000m en ~2s, como pidió el diseño)
     DASH_TARGET_DISTANCE: 1000,  // metros que hay que descender en dash antes del cartel de alerta
     DASH_WARNING_REACT_S: 1.0,   // segundos para soltar y abrir el paracaídas tras el cartel
@@ -543,7 +550,7 @@
       brainButtonVisible: false,
       brainButtonAppearAt: randRange(CONFIG.BRAIN_BUTTON_APPEAR_MIN, CONFIG.BRAIN_BUTTON_APPEAR_MAX),
       dashUsed: false,
-      dash: { state: 'idle', startAltitude: 0, warningTimer: 0, deathTimer: 0 },
+      dash: { state: 'idle', startAltitude: 0, startTime: 0, warningTimer: 0, deathTimer: 0 },
       player: createPlayer()
     };
     input.isDashHold = false;
@@ -867,12 +874,20 @@
       Game.player.targetX = clamp(e.clientX, Game.player.width / 2, canvasWidth - Game.player.width / 2);
     }
 
-    // Triple toque para la caída rápida: si ya hubo 2 toques válidos hace
-    // poco, este 3er press la arranca ya mismo (sin esperar el release) y
-    // hay que mantenerlo apretado para sostenerla (ver onPointerUp).
+    // Triple toque para la caída rápida: se cuenta por la cadencia de los
+    // press (no hace falta que cada uno además "resuelva" como toque
+    // limpio al soltar, eso era frágil con el dedo real en un celular).
+    // Al 3er press seguido arranca ya mismo, sin esperar el release, y hay
+    // que mantenerlo apretado para sostenerla (ver onPointerUp).
     if (!input.onBrainButton && Game.state === 'playing' && !Game.dashUsed && Game.dash.state === 'idle') {
       var downNow = performance.now();
-      if (input.comboTapCount >= 2 && downNow - input.comboLastTapTime <= CONFIG.DASH_TAP_WINDOW_MS) {
+      if (input.comboTapCount > 0 && downNow - input.comboLastTapTime <= CONFIG.DASH_TAP_WINDOW_MS) {
+        input.comboTapCount++;
+      } else {
+        input.comboTapCount = 1;
+      }
+      input.comboLastTapTime = downNow;
+      if (input.comboTapCount >= 3) {
         input.comboTapCount = 0;
         input.isDashHold = true;
         startDash();
@@ -918,16 +933,6 @@
       Game.player.parachuteOpen = !Game.player.parachuteOpen;
       sfxParachute();
       syncMusic();
-      // cuenta como toque del combo para la caída rápida, si todavía no se usó
-      if (!Game.dashUsed && Game.dash.state === 'idle') {
-        var upNow = performance.now();
-        if (input.comboTapCount > 0 && upNow - input.comboLastTapTime <= CONFIG.DASH_TAP_WINDOW_MS) {
-          input.comboTapCount++;
-        } else {
-          input.comboTapCount = 1;
-        }
-        input.comboLastTapTime = upNow;
-      }
     }
     input.active = false;
     input.pointerId = null;
@@ -1519,15 +1524,24 @@
     Game.dashUsed = true;
     Game.dash.state = 'active';
     Game.dash.startAltitude = Game.altitude;
+    Game.dash.startTime = performance.now();
     Game.player.parachuteOpen = false;
     sfxDashStart();
   }
 
-  // Soltar antes de llegar a los 1000m: se cancela sin castigo, se puede
-  // volver a jugar normal (pero ya no queda otro intento, es de un solo uso).
+  // Soltar antes de llegar a los 1000m: se cancela sin castigo. Si el
+  // suelte fue casi instantáneo (un toque rápido en vez de mantener
+  // apretado de verdad, ej. un triple toque hecho todo rápido sin querer
+  // sostener el 3ro) no se gasta el único intento: fue un amague, no un uso
+  // real.
   function cancelDash() {
+    var heldMs = performance.now() - Game.dash.startTime;
     Game.dash.state = 'idle';
-    sfxDashCancel();
+    if (heldMs < CONFIG.DASH_MISFIRE_GRACE_MS) {
+      Game.dashUsed = false;
+    } else {
+      sfxDashCancel();
+    }
   }
 
   // Soltar a tiempo durante la ventana de alerta: abre el paracaídas y te
