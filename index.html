@@ -265,6 +265,7 @@
     PERIMETRAL_SETBACK_M: 1000,  // metros que te hace retroceder el perimetral
     PERIMETRAL_BOUNCE_DURATION: 0.55, // segundos que dura la animación de "salir disparado" hacia arriba
     PERIMETRAL_BOUNCE_HEIGHT: 130,    // px que sube el sprite en pantalla en el pico del rebote
+    PERIMETRAL_CLOUD_BOOST: 900,      // px/seg extra hacia abajo para las nubes durante el rebote (sensación de subir)
 
     DIPLOMA_FALL_SPEED: 280,             // px/seg cayendo (rápido, imposible de seguir)
     DIPLOMA_BURN_AFTER: 1.3,             // segundos cayendo antes de prenderse fuego
@@ -274,7 +275,9 @@
     BRAIN_MODE_HALO_DURATION: 1.6,  // segundos que dura el barrido de círculos + rayos "EGO"
     BRAIN_BUTTON_SIZE: 88,          // el doble de grande que un objeto normal (44px)
     BRAIN_BUTTON_GAP: 14,           // separación entre la cabeza del jugador y el botón
-    BRAIN_BUTTON_FADE_DURATION: 0.6 // segundos que tarda en ponerse gris y desaparecer tras el 2do toque
+    BRAIN_BUTTON_FADE_DURATION: 0.6, // segundos que tarda en ponerse gris y desaparecer tras el 2do toque
+    BRAIN_BUTTON_APPEAR_MIN: 10,    // el botón no aparece de entrada: sale recién entre 10 y 20s de partida
+    BRAIN_BUTTON_APPEAR_MAX: 20
   };
 
   // Definición central de tipos de objeto: emoji + comportamiento + texto
@@ -426,6 +429,8 @@
       brainModeHaloTimer: 0,
       brainButtonFadeTimer: 0,
       brainButtonGone: false,
+      brainButtonVisible: false,
+      brainButtonAppearAt: randRange(CONFIG.BRAIN_BUTTON_APPEAR_MIN, CONFIG.BRAIN_BUTTON_APPEAR_MAX),
       player: createPlayer()
     };
     overlayTitleEl.textContent = 'Game Over';
@@ -516,6 +521,12 @@
     playTone(659.25, 0.16, 'triangle', 0.2, 0.14);
     playTone(783.99, 0.16, 'triangle', 0.2, 0.28);
     playTone(1046.5, 0.32, 'triangle', 0.22, 0.42);
+  }
+  // Aviso de que el botón del cerebrito acaba de aparecer: campanita corta
+  // para llamar la atención, más discreta que la fanfarria de activarlo.
+  function sfxBrainAppear() {
+    playTone(880, 0.09, 'sine', 0.14);
+    playTone(1318.51, 0.14, 'sine', 0.16, 0.09);
   }
   // Modo cerebrito: fanfarria triunfal ascendente con barrido final.
   function sfxBrainMode() {
@@ -686,7 +697,7 @@
   }
 
   function isOnBrainButton(clientX, clientY) {
-    if (!Game.player || Game.brainButtonGone || Game.brainButtonFadeTimer > 0) return false;
+    if (!Game.player || !Game.brainButtonVisible || Game.brainButtonGone || Game.brainButtonFadeTimer > 0) return false;
     var pos = getBrainButtonPos();
     var half = CONFIG.BRAIN_BUTTON_SIZE / 2;
     return Math.abs(clientX - pos.x) <= half && Math.abs(clientY - pos.y) <= half;
@@ -1157,11 +1168,23 @@
 
   function updateClouds(dt) {
     var margin = 60;
+    // Mientras dura el rebote de la perimetral, las nubes se van de golpe
+    // hacia abajo (en vez del drift lento normal hacia arriba): refuerza
+    // la sensación de que a Rufo lo mandaron para arriba.
+    var perimetralBoost = Game.perimetralEffectTimer > 0 ? CONFIG.PERIMETRAL_CLOUD_BOOST : 0;
     for (var i = 0; i < Game.clouds.length; i++) {
       var c = Game.clouds[i];
-      c.y -= c.speed * dt;
+      c.y += (perimetralBoost - c.speed) * dt;
       if (c.y + margin * c.scale < 0) {
         c.y = canvasHeight + margin * c.scale;
+        c.x = randRange(-40, canvasWidth + 40);
+        c.scale = randRange(CONFIG.CLOUD_MIN_SCALE, CONFIG.CLOUD_MAX_SCALE);
+        c.speed = randRange(CONFIG.CLOUD_MIN_SPEED, CONFIG.CLOUD_MAX_SPEED);
+        c.opacity = randRange(0.5, 0.85);
+      } else if (c.y - margin * c.scale > canvasHeight) {
+        // el impulso de la perimetral puede mandar una nube de largo por
+        // abajo; se recicla arriba igual que cuando sale por el techo.
+        c.y = -margin * c.scale;
         c.x = randRange(-40, canvasWidth + 40);
         c.scale = randRange(CONFIG.CLOUD_MIN_SCALE, CONFIG.CLOUD_MAX_SCALE);
         c.speed = randRange(CONFIG.CLOUD_MIN_SPEED, CONFIG.CLOUD_MAX_SPEED);
@@ -1197,6 +1220,12 @@
         Game.brainButtonFadeTimer = 0;
         Game.brainButtonGone = true;
       }
+    }
+    // El botón del cerebrito no está desde el arranque: recién sale entre
+    // los 10 y 20s de partida (brainButtonAppearAt, sorteado en resetGame).
+    if (!Game.brainButtonVisible && !Game.brainModeUsed && Game.elapsedTime >= Game.brainButtonAppearAt) {
+      Game.brainButtonVisible = true;
+      sfxBrainAppear();
     }
     if (!Game.player.parachuteOpen) Game.windPhase = (Game.windPhase + dt * 1.8) % 1;
 
@@ -1594,13 +1623,14 @@
     ctx.restore();
   }
 
-  // Botón del cerebrito: fijo arriba de la cabeza de Rufo durante toda la
-  // partida (el doble de grande que un objeto normal), listo para activar
-  // el modo cerebrito con un toque dedicado (ver isOnBrainButton). Al
-  // gastarse (brainButtonFadeTimer) se pone gris y encoge hasta
-  // desaparecer para siempre (brainButtonGone).
+  // Botón del cerebrito: no está desde el arranque, sale recién entre los
+  // 10 y 20s de partida (brainButtonAppearAt/brainButtonVisible), fijo
+  // arriba de la cabeza de Rufo (el doble de grande que un objeto normal),
+  // listo para activar el modo cerebrito con un toque dedicado (ver
+  // isOnBrainButton). Al gastarse (brainButtonFadeTimer) se pone gris y
+  // encoge hasta desaparecer para siempre (brainButtonGone).
   function renderBrainButton() {
-    if (Game.brainButtonGone) return;
+    if (!Game.brainButtonVisible || Game.brainButtonGone) return;
     var pos = getBrainButtonPos();
     if (Game.brainButtonFadeTimer > 0) {
       var ft = clamp(Game.brainButtonFadeTimer / CONFIG.BRAIN_BUTTON_FADE_DURATION, 0, 1);
@@ -1617,6 +1647,18 @@
       : 1 + Math.sin(Game.elapsedTime * 3) * 0.05;
     drawHalo(pos.x, pos.y, CONFIG.BRAIN_BUTTON_SIZE * 0.7 * pulse);
     drawEmoji('🧠', pos.x, pos.y, CONFIG.BRAIN_BUTTON_SIZE * pulse);
+    if (!Game.brainModeUsed) {
+      ctx.save();
+      ctx.font = 'bold 13px "Courier New", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.strokeText('ACTIVAR MODO CEREBRITO', pos.x, pos.y - CONFIG.BRAIN_BUTTON_SIZE * pulse * 0.62);
+      ctx.fillStyle = '#8CFFB0';
+      ctx.fillText('ACTIVAR MODO CEREBRITO', pos.x, pos.y - CONFIG.BRAIN_BUTTON_SIZE * pulse * 0.62);
+      ctx.restore();
+    }
   }
 
   function renderEntities() {
