@@ -409,8 +409,8 @@
     CLOUD_MIN_SCALE: 0.6,
     CLOUD_MAX_SCALE: 1.5,
 
-    PARTY_MODE_DURATION_MIN: 7,
-    PARTY_MODE_DURATION_MAX: 7,
+    PARTY_MODE_DURATION_MIN: 6,
+    PARTY_MODE_DURATION_MAX: 6,
     PARTY_TRIGGER_CHANCE: 0.05,  // probabilidad de que una oleada incluya el ropero
     PERIMETRAL_CHANCE: 0.035,    // probabilidad de que una oleada incluya al perimetral
     HEART_CHANCE: 0.05,          // probabilidad de que una oleada incluya el corazón (único que da vida)
@@ -726,6 +726,22 @@
     for (var i = 0; i < n; i++) Game.particles.push(createFireParticle(x, y));
     for (var i = 0; i < 6; i++) {
       Game.particles.push(createParticle(x + randRange(-40, 40), y + randRange(-20, 10), Math.random() < 0.5 ? '🔥' : '💥'));
+    }
+  }
+
+  // Festejo grande de la cinemática de victoria: varias tandas de confeti
+  // repartidas + corazones + un montón de banderas del orgullo, todo junto
+  // para que se sienta más grande que un festejo de fiesta normal.
+  function spawnPartyCelebration(x, y) {
+    spawnConfetti(x, y);
+    spawnConfetti(x - 90, y - 30);
+    spawnConfetti(x + 90, y - 30);
+    spawnHeartParticles(x, y);
+    spawnHeartParticles(x - 60, y - 20);
+    spawnHeartParticles(x + 60, y - 20);
+    var n = randInt(7, 9);
+    for (var i = 0; i < n; i++) {
+      Game.particles.push(createParticle(x + randRange(-140, 140), y + randRange(-80, 10), '🏳️‍🌈'));
     }
   }
 
@@ -1145,6 +1161,10 @@
 
   function onPointerDown(e) {
     if (input.active) return;
+    // Cinemática de cierre en curso: ignorar toques (nada que jugar, y
+    // así no se puede abrir/cerrar el paracaídas ni disparar nada por
+    // accidente mientras la cámara se aleja).
+    if (Game.landing) { e.preventDefault(); return; }
 
     // Segundo paso del gesto de salvataje en la ventana de alerta: ya
     // soltaste una vez (ver onPointerUp/onPointerCancel) y volviste a tocar
@@ -2242,6 +2262,11 @@
       finish: finishFn
     };
     Game.player.parachuteOpen = false;
+    if (kind === 'party') {
+      // Cae directo a la fiesta: suena el mismo tema del modo ropero.
+      stopWind();
+      MusicEngine.start('party');
+    }
   }
 
   function updateLanding(dt) {
@@ -2264,8 +2289,7 @@
         spawnExplosion(Game.player.x, L.groundY);
         sfxCrash();
       } else {
-        spawnConfetti(Game.player.x, L.groundY);
-        spawnHeartParticles(Game.player.x, L.groundY);
+        spawnPartyCelebration(Game.player.x, L.groundY);
         spawnFloatingText(Game.player.x, L.groundY - 40, '¡A LA FIESTA!', '#ffe6fa');
       }
     }
