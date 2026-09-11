@@ -5,7 +5,8 @@
       "name": "paracaidista",
       "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
       "runtimeArgs": [".claude/server.js"],
-      "port": 8791
+      "port": 8791,
+      "autoPort": true
     }
   ]
 }

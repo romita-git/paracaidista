@@ -46,6 +46,7 @@
     letter-spacing: 1px;
   }
   #hudLives { font-size: 20px; letter-spacing: 2px; }
+  #hudPoints { font-size: 18px; }
   #hudScore { font-size: 18px; }
   #altBar {
     position: fixed;
@@ -304,10 +305,10 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<audio id="partyThemeAudio" src="tema.mp3" loop preload="auto"></audio>
 
 <div id="hud">
   <div id="hudLives">❤️❤️❤️</div>
+  <div id="hudPoints">Score: 0</div>
   <div id="hudScore">0s</div>
 </div>
 
@@ -317,7 +318,7 @@
   <div id="altBarGround">🟫</div>
 </div>
 
-<div id="startHint">Arrastrá para moverte · Toque: paracaídas · Triple toque: caída libre</div>
+<div id="startHint">Arrastrá para moverte · Toque: paracaídas · Doble toque: caída libre</div>
 
 <div id="overlayGameOver" class="overlay">
   <h1 id="overlayTitle">Game Over</h1>
@@ -351,7 +352,7 @@
   <div id="faqContent">
     <p>🕹️ Arrastrá el dedo para moverte a los costados.</p>
     <p>🪂 Toque corto: abrís o cerrás el paracaídas (frena la caída).</p>
-    <p>⚡ Triple toque y mantené apretado: caída libre a toda velocidad. Es de un solo uso por partida y arriesgado: si no soltás a tiempo cuando aparece el cartel, te estrellás.</p>
+    <p>⚡ Doble toque y mantené apretado: caída libre a toda velocidad. Es de un solo uso por partida y arriesgado: cuando aparece el cartel, soltá el dedo y volvé a tocar en menos de un segundo o te estrellás.</p>
     <p>🧠 El cerebrito aparece solo, arriba de tu cabeza: tocalo para limpiar la pantalla de obstáculos. También de un solo uso.</p>
     <p>🟢 Los objetos con halo verde te curan. Esquivá el resto.</p>
   </div>
@@ -381,8 +382,8 @@
     PLAYER_WIDTH: 164,  // el sprite ahora es la dupla en tándem (más ancho que alto); x2 para que se vea bien
     PLAYER_HEIGHT: 152,
     PLAYER_HITBOX_SCALE: 0.49,  // la caja de colisión real es ~50% más chica que el sprite dibujado (dos recortes del 30% acumulados), para que sea más fácil esquivar
-    PLAYER_MAX_LIVES: 3,
-    PLAYER_START_LIVES: 3,
+    PLAYER_MAX_LIVES: 5,
+    PLAYER_START_LIVES: 5,
 
     HORIZ_ACCEL_CLOSED: 900,     // px/seg^2 hacia targetX, control reducido (paracaídas cerrado)
     HORIZ_ACCEL_OPEN: 2000,      // control mejorado con paracaídas abierto
@@ -408,27 +409,40 @@
     CLOUD_MIN_SCALE: 0.6,
     CLOUD_MAX_SCALE: 1.5,
 
-    PARTY_MODE_DURATION_MIN: 10,
-    PARTY_MODE_DURATION_MAX: 15,
+    PARTY_MODE_DURATION_MIN: 7,
+    PARTY_MODE_DURATION_MAX: 7,
     PARTY_TRIGGER_CHANCE: 0.05,  // probabilidad de que una oleada incluya el ropero
     PERIMETRAL_CHANCE: 0.035,    // probabilidad de que una oleada incluya al perimetral
-    CHICKENMAN_CHANCE: 0.04,     // probabilidad de que una oleada incluya al hombre pollo
+    HEART_CHANCE: 0.05,          // probabilidad de que una oleada incluya el corazón (único que da vida)
 
     TAP_MAX_DURATION_MS: 260,
     TAP_MAX_MOVE_PX: 20,          // margen generoso: en el dedo real de un celular un "toque" se mueve más que con mouse
 
     INVULNERABLE_TIME: 1.0,      // segundos de i-frames tras recibir daño
 
-    // Sistema de puntaje: en base a metros descendidos (no tiempo posta,
+    // Sistema de puntaje: 1 punto por cada metro descendido (no tiempo posta,
     // para que quedarse con el paracaídas abierto todo el partido no infle
-    // el score de arriba) + bonus fuertes por lo que da o quita vida y por
-    // los ítems de fiesta/ropero, + un extra final por vidas que quedaron.
-    ALTITUDE_SCORE_PER_METER: 0.4,
-    HEAL_SCORE_BONUS: 60,
-    HAZARD_SCORE_PENALTY: 50,
-    PARTY_BONUS_SCORE: 90,
-    CHICKEN_BONUS_SCORE: 60,
+    // el score de arriba) + 500 por cualquier objeto que agarrás, para
+    // arriba (bonus) o para abajo (hazard) + un extra final por vidas que
+    // quedaron.
+    ALTITUDE_SCORE_PER_METER: 1,
+    HEAL_SCORE_BONUS: 500,
+    ITEM_BONUS_SCORE: 500,       // chocolate/vasectomía/ahorros: ya no curan, solo dan puntos
+    HAZARD_SCORE_PENALTY: 500,
+    PARTY_BONUS_SCORE: 500,
+    HEART_FULL_BONUS_SCORE: 3000, // agarrar un corazón con la vida ya llena
     LIFE_REMAINING_BONUS: 250,   // por cada vida que te quedó, sumado al final de la partida
+    HEART_FLY_DURATION: 0.45,    // cuánto tarda el corazón en volar hasta el corazón vacío del HUD
+
+    // Cinemática de cierre (ver startLanding/updateLanding/renderLandingCinematic):
+    // antes de mostrar el cartel de Game Over/Victoria, la cámara "se aleja"
+    // (el personaje se achica) mientras cae hasta el piso; al tocarlo hay un
+    // impacto (explosión con fuego si perdiste, confeti/fiesta si ganaste).
+    LANDING_FALL_DURATION: 1.0,
+    LANDING_SETTLE_DURATION: 0.6,
+    LANDING_CRASH_SETTLE_DURATION: 1.3, // más largo que el de victoria: da tiempo a que se vea la explosión antes del fundido a negro
+    LANDING_GROUND_Y_RATIO: 0.86,
+    LANDING_SHRINK_SCALE: 0.32,
 
     // Xilófono: minijuego de un solo uso. Aparece un ícono al llegar a los
     // 8000m de altitud; al activarlo, la pantalla se limpia de nubes/
@@ -441,7 +455,8 @@
     XYLO_MISS_PENALTY: 45,
     XYLO_ICON_SIZE: 56,
     XYLO_SHOCK_DURATION: 0.4, // cuánto dura la descarga eléctrica visual sobre Rufo
-    HEART_CLOUD_SPEED_FACTOR: 0.45, // en modo ropero los corazones de fondo van más lento que en modo normal
+    HEART_CLOUD_SPEED_FACTOR: 7, // en modo ropero los corazones de fondo van mucho más rápido que en modo normal
+    PARTY_OBJECT_SPEED_FACTOR: 3, // en modo ropero los objetos que suben también van mucho más rápido
 
     // Objetivo: llegar al piso. Arranca a 10.000m y debería tardar ~2min
     // como mucho jugando bien (cerrando el paracaídas casi todo el tiempo).
@@ -458,19 +473,23 @@
     DIPLOMA_TRIGGER_CHANCE_PER_SEC: 0.018, // probabilidad por segundo de que aparezca
 
     BRAIN_MODE_HALO_DURATION: 1.6,  // segundos que dura el barrido de círculos + rayos "EGO"
+    BRAIN_SWEEP_FLING_SPEED_MIN: 420, // px/seg a la que el campo de fuerza expulsa cada obstáculo
+    BRAIN_SWEEP_FLING_SPEED_MAX: 620,
     BRAIN_BUTTON_SIZE: 88,          // el doble de grande que un objeto normal (44px)
     BRAIN_BUTTON_GAP: 14,           // separación entre la cabeza del jugador y el botón
     BRAIN_BUTTON_FADE_DURATION: 0.6, // segundos que tarda en ponerse gris y desaparecer tras el 2do toque
     BRAIN_BUTTON_APPEAR_MIN: 10,    // el botón no aparece de entrada: sale recién entre 10 y 20s de partida
     BRAIN_BUTTON_APPEAR_MAX: 20,
 
-    // Caída rápida (dash): triple toque y mantener para tirarse en picada.
+    // Caída rápida (dash): doble toque y mantener para tirarse en picada.
     // Un solo uso por partida (como el cerebrito).
     DASH_TAP_WINDOW_MS: 900,     // ventana máxima entre toques para que cuenten como parte del combo (generosa: en el celular el ritmo real es más lento que con mouse)
-    DASH_MISFIRE_GRACE_MS: 180,  // si soltás casi al instante del 3er toque (no lo mantuviste) no se gasta el único uso
+    DASH_MISFIRE_GRACE_MS: 180,  // si soltás casi al instante del 2do toque (no lo mantuviste) no se gasta el único uso
     DASH_DESCENT_RATE: 500,      // m/seg durante el dash (1000m en ~2s, como pidió el diseño)
     DASH_TARGET_DISTANCE: 1000,  // metros que hay que descender en dash antes del cartel de alerta
-    DASH_WARNING_REACT_S: 1.0,   // segundos para soltar y abrir el paracaídas tras el cartel
+    // Al aparecer el cartel hay que soltar el dedo y volver a apretar (dos
+    // toques, no alcanza con soltar) antes de que se acabe esta ventana.
+    DASH_WARNING_REACT_S: 1.0,
     DASH_DEATH_GROWTH: 2.2,      // qué tan agresivo es el crecimiento exponencial de la velocidad al perder el control
     DASH_DEATH_DURATION: 2.0,    // tope duro: si no morís antes por altitud, morís sí o sí a los 2s
     DASH_SPRITE_WIDTH: 120,
@@ -488,16 +507,16 @@
     punch:       { emoji: '🥊', kind: 'hazard', text: 'Denuncia por maltrato' },
     tire:        { emoji: '🛞', kind: 'hazard', text: '-$200 x huelga' },
 
-    chocolate:   { emoji: '🍫', kind: 'heal', text: '¡Milka!' },
-    vasectomy:   { emoji: '✂', kind: 'heal', text: '¡Vasectomía! +$300' },
-    savings:     { emoji: '💰', kind: 'heal', text: '5p ahorrados' },
+    chocolate:   { emoji: '🍫', kind: 'bonus', text: '¡Milka!' },
+    vasectomy:   { emoji: '✂', kind: 'bonus', text: '¡Vasectomía! +$300' },
+    savings:     { emoji: '💰', kind: 'bonus', text: '5p ahorrados' },
+    heart:       { emoji: '❤️', kind: 'heal', text: '+1 vida' }, // único ítem capaz de dar vida
 
     wardrobe:    { emoji: '🚪', kind: 'partyTrigger', text: '¡Saliendo del clóset!' }, // ícono propio, ver drawWardrobeIcon()
     eggplant:    { emoji: '🍆', kind: 'partyBonus', text: 'Mmmm' },
     tanktop:     { emoji: '🎽', kind: 'partyBonus', text: '¡Tiembla el músculo!' },
     rainbowflag: { emoji: '🏳️‍🌈', kind: 'partyBonus', text: '¡Orgullo!' },
 
-    chickenman:  { emoji: '🐔', kind: 'chickenBonus', text: '¡Cocorocó!' },
     perimetral:  { emoji: '👮🏻', kind: 'setback', text: '¡Perimetral! +1000m' }
   };
 
@@ -515,14 +534,41 @@
   var lastHazardType = null;
 
   var HAZARD_TYPES = ['bottle', 'chard', 'lawsuit', 'judge', 'punch', 'tire'];
-  var HEAL_TYPES = ['chocolate', 'vasectomy', 'savings'];
+  var BONUS_TYPES = ['chocolate', 'vasectomy', 'savings'];
   var PARTY_BONUS_TYPES = ['eggplant', 'tanktop', 'rainbowflag'];
 
   // ==== 2. ESTADO DEL JUEGO ====
   var canvas = document.getElementById('gameCanvas');
   var ctx = canvas.getContext('2d');
   var hudLivesEl = document.getElementById('hudLives');
+  var hudPointsEl = document.getElementById('hudPoints');
   var hudScoreEl = document.getElementById('hudScore');
+
+  // Cada corazón de vida es su propio <span> (en vez de un solo string de
+  // emojis) para poder ubicar la posición exacta en pantalla de un corazón
+  // vacío puntual: ahí es donde "aterriza" la animación del corazón que
+  // agarrás (ver createHeartFlyParticle / getHeartSlotTarget).
+  var heartSlotEls = [];
+  function buildHeartSlots() {
+    hudLivesEl.innerHTML = '';
+    heartSlotEls = [];
+    for (var i = 0; i < CONFIG.PLAYER_MAX_LIVES; i++) {
+      var span = document.createElement('span');
+      span.textContent = '❤️';
+      hudLivesEl.appendChild(span);
+      heartSlotEls.push(span);
+    }
+  }
+  buildHeartSlots();
+
+  function getHeartSlotTarget(index) {
+    var el = heartSlotEls[index];
+    if (el) {
+      var r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }
+    return { x: 30, y: 30 };
+  }
   var altBarParachuteEl = document.getElementById('altBarParachute');
   var overlayGameOverEl = document.getElementById('overlayGameOver');
   var overlayTitleEl = document.getElementById('overlayTitle');
@@ -596,6 +642,93 @@
     return { x: x, y: y, vy: -55, life: 1.6, maxLife: 1.6, text: text, color: color };
   }
 
+  // Corazón que, al agarrarlo, vuela desde donde lo tocaste hasta el
+  // corazón vacío del HUD que va a llenar (ver getHeartSlotTarget); se
+  // anima con lerp propio en updateParticles, no con vy como el resto.
+  function createHeartFlyParticle(x, y, targetX, targetY) {
+    var duration = CONFIG.HEART_FLY_DURATION;
+    return {
+      kind: 'heartFly',
+      x: x, y: y,
+      startX: x, startY: y,
+      targetX: targetX, targetY: targetY,
+      t: 0, duration: duration,
+      life: duration, maxLife: duration,
+      scale: 1,
+      emoji: '❤️'
+    };
+  }
+
+  // Obstáculo agarrado por el campo de fuerza del cerebrito: se queda
+  // quieto hasta que el anillo expansivo (ver renderBrainSweep) lo alcanza
+  // (delay, calculado según su distancia al centro) y ahí sale disparado
+  // hacia afuera, como si el campo lo empujara.
+  function createBrainSweepParticle(x, y, originX, originY, delay, emoji) {
+    var angle = Math.atan2(y - originY, x - originX);
+    var flingSpeed = randRange(CONFIG.BRAIN_SWEEP_FLING_SPEED_MIN, CONFIG.BRAIN_SWEEP_FLING_SPEED_MAX);
+    return {
+      kind: 'brainSweep',
+      x: x, y: y,
+      vx: Math.cos(angle) * flingSpeed,
+      vy: Math.sin(angle) * flingSpeed,
+      delay: delay,
+      totalT: 0,
+      life: 1, maxLife: 1,
+      emoji: emoji
+    };
+  }
+
+  var DUST_COLORS = ['#c9a876', '#b08d57', '#8f7048', '#d8c39a'];
+  // Puff de polvo del impacto contra el piso (cinemática de derrota): estalla
+  // hacia arriba en abanico y después cae por gravedad, como tierra real.
+  function createDustParticle(x, y) {
+    var angle = randRange(-Math.PI * 0.9, -Math.PI * 0.1);
+    var speed = randRange(80, 220);
+    var life = randRange(0.5, 0.9);
+    return {
+      kind: 'dust',
+      x: x, y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: life, maxLife: life,
+      size: randRange(10, 22),
+      color: pickOneOf(DUST_COLORS)
+    };
+  }
+  function spawnDustCloud(x, y) {
+    var n = randInt(14, 20);
+    for (var i = 0; i < n; i++) Game.particles.push(createDustParticle(x, y));
+  }
+
+  var FIRE_COLORS = ['#ff4d1c', '#ff8c1a', '#ffcf40', '#ff2d2d'];
+  // Bola de fuego del choque: círculos grandes y cálidos que reusan la
+  // física del polvo (kind 'dust': gravedad + se achican al desvanecer),
+  // solo que más grandes/lentos para leerse como llamaradas, no tierra.
+  function createFireParticle(x, y) {
+    var angle = randRange(-Math.PI * 0.95, -Math.PI * 0.05);
+    var speed = randRange(100, 260);
+    var life = randRange(0.55, 0.9);
+    return {
+      kind: 'dust',
+      x: x, y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: life, maxLife: life,
+      size: randRange(16, 32),
+      color: pickOneOf(FIRE_COLORS)
+    };
+  }
+  // Explosión del choque contra el piso: tierra (spawnDustCloud) + bola de
+  // fuego + un puñado de emojis de fuego/estallido bien grandes encima.
+  function spawnExplosion(x, y) {
+    spawnDustCloud(x, y);
+    var n = randInt(12, 16);
+    for (var i = 0; i < n; i++) Game.particles.push(createFireParticle(x, y));
+    for (var i = 0; i < 6; i++) {
+      Game.particles.push(createParticle(x + randRange(-40, 40), y + randRange(-20, 10), Math.random() < 0.5 ? '🔥' : '💥'));
+    }
+  }
+
   function createConfettiParticle(x, y, color) {
     var angle = randRange(0, Math.PI * 2);
     var speed = randRange(60, 160);
@@ -657,10 +790,11 @@
       brainButtonVisible: false,
       brainButtonAppearAt: randRange(CONFIG.BRAIN_BUTTON_APPEAR_MIN, CONFIG.BRAIN_BUTTON_APPEAR_MAX),
       dashUsed: false,
-      dash: { state: 'idle', startAltitude: 0, startTime: 0, warningTimer: 0, deathTimer: 0 },
+      dash: { state: 'idle', startAltitude: 0, startTime: 0, warningTimer: 0, deathTimer: 0, awaitingRepress: false },
       xyloUsed: false,
       xyloVisible: false,
       xylo: { state: 'idle', timer: 0, litKeyIndex: 0, wandX: 0, playerPhase: 0, bolts: [], shockTimer: 0 },
+      landing: null,               // cinemática de cierre en curso (ver startLanding), null si no hay ninguna
       player: createPlayer()
     };
     input.isDashHold = false;
@@ -880,17 +1014,32 @@
   // a la vez; empieza/para según el modo activo (fiesta o paracaídas).
   var MusicEngine = (function () {
     var TRACKS = {
+      // Tecno-pop ochentoso a puro sintetizador (sin archivo de audio):
+      // bajo en sawtooth pulsando corcheas + arpegio de lead en square,
+      // rápido y flashero como la temática arcoíris del ropero.
       party: {
-        stepTime: 0.15,
+        stepTime: 0.115,
+        bassType: 'sawtooth',
+        leadType: 'square',
+        bassGain: 0.07,
+        leadGain: 0.06,
         steps: [
-          { bass: 220.00, lead: 659.25 },
-          { bass: 220.00, lead: 0 },
-          { bass: 277.18, lead: 783.99 },
-          { bass: 220.00, lead: 0 },
-          { bass: 329.63, lead: 659.25 },
-          { bass: 220.00, lead: 0 },
-          { bass: 277.18, lead: 587.33 },
-          { bass: 220.00, lead: 0 }
+          { bass: 110.00, lead: 220.00 },
+          { bass: 110.00, lead: 261.63 },
+          { bass: 110.00, lead: 329.63 },
+          { bass: 110.00, lead: 440.00 },
+          { bass: 87.31,  lead: 174.61 },
+          { bass: 87.31,  lead: 220.00 },
+          { bass: 87.31,  lead: 261.63 },
+          { bass: 87.31,  lead: 349.23 },
+          { bass: 130.81, lead: 261.63 },
+          { bass: 130.81, lead: 329.63 },
+          { bass: 130.81, lead: 392.00 },
+          { bass: 130.81, lead: 523.25 },
+          { bass: 98.00,  lead: 196.00 },
+          { bass: 98.00,  lead: 246.94 },
+          { bass: 98.00,  lead: 293.66 },
+          { bass: 98.00,  lead: 392.00 }
         ]
       },
       parachute: {
@@ -923,8 +1072,8 @@
     var timerId = null;
 
     function playStep(track, step) {
-      if (step.bass) playTone(step.bass, track.stepTime * 0.9, 'triangle', 0.07);
-      if (step.lead) playTone(step.lead, track.stepTime * 0.7, 'sine', 0.05, track.stepTime * 0.05);
+      if (step.bass) playTone(step.bass, track.stepTime * 0.9, track.bassType || 'triangle', track.bassGain != null ? track.bassGain : 0.07);
+      if (step.lead) playTone(step.lead, track.stepTime * 0.7, track.leadType || 'sine', track.leadGain != null ? track.leadGain : 0.05, track.stepTime * 0.05);
     }
 
     function tick() {
@@ -951,33 +1100,12 @@
     return { start: start, stop: stop };
   })();
 
-  // Tema real (archivo de audio) para el modo fiesta/ropero, en vez del
-  // track sintetizado.
-  var partyThemeAudioEl = document.getElementById('partyThemeAudio');
-  function startPartyTheme() {
-    // syncMusic() se llama seguido (cada vez que abrís/cerrás el paracaídas,
-    // etc.) y esta función se re-ejecuta cada vez que seguís en modo fiesta;
-    // si ya está sonando no hay que tocarla, si no se reinicia todo el
-    // tiempo en vez de sonar de fondo sin cortes.
-    if (!partyThemeAudioEl.paused) return;
-    try {
-      partyThemeAudioEl.currentTime = 0;
-      partyThemeAudioEl.volume = 0.6;
-      var p = partyThemeAudioEl.play();
-      if (p && p.catch) p.catch(function () {});
-    } catch (err) {}
-  }
-  function stopPartyTheme() {
-    try { partyThemeAudioEl.pause(); } catch (err) {}
-  }
-
   // Único punto de decisión de qué suena: fiesta > paracaídas abierto >
   // viento (por defecto). Se llama en cada transición de estado relevante
   // en vez de duplicar la lógica de prioridad en cada lugar.
   function syncMusic() {
-    if (Game.state !== 'playing') { MusicEngine.stop(); stopWind(); stopPartyTheme(); return; }
-    if (Game.mode === 'party') { stopWind(); MusicEngine.stop(); startPartyTheme(); return; }
-    stopPartyTheme();
+    if (Game.state !== 'playing') { MusicEngine.stop(); stopWind(); return; }
+    if (Game.mode === 'party') { stopWind(); MusicEngine.start('party'); return; }
     if (Game.player.parachuteOpen) { stopWind(); MusicEngine.start('parachute'); return; }
     MusicEngine.stop();
     startWind();
@@ -1017,6 +1145,17 @@
 
   function onPointerDown(e) {
     if (input.active) return;
+
+    // Segundo paso del gesto de salvataje en la ventana de alerta: ya
+    // soltaste una vez (ver onPointerUp/onPointerCancel) y volviste a tocar
+    // a tiempo. Se resuelve acá mismo, sin dejar pendiente ningún puntero.
+    if (Game.dash.state === 'warning' && Game.dash.awaitingRepress) {
+      Game.dash.awaitingRepress = false;
+      resolveDashWarningSuccess();
+      e.preventDefault();
+      return;
+    }
+
     ensureAudio();
     syncMusic();
     input.active = true;
@@ -1043,10 +1182,10 @@
       Game.player.targetX = clamp(e.clientX, Game.player.width / 2, canvasWidth - Game.player.width / 2);
     }
 
-    // Triple toque para la caída rápida: se cuenta por la cadencia de los
+    // Doble toque para la caída rápida: se cuenta por la cadencia de los
     // press (no hace falta que cada uno además "resuelva" como toque
     // limpio al soltar, eso era frágil con el dedo real en un celular).
-    // Al 3er press seguido arranca ya mismo, sin esperar el release, y hay
+    // Al 2do press seguido arranca ya mismo, sin esperar el release, y hay
     // que mantenerlo apretado para sostenerla (ver onPointerUp).
     if (!input.onBrainButton && !input.onXyloIcon && Game.state === 'playing' && !Game.dashUsed && Game.dash.state === 'idle') {
       var downNow = performance.now();
@@ -1056,7 +1195,7 @@
         input.comboTapCount = 1;
       }
       input.comboLastTapTime = downNow;
-      if (input.comboTapCount >= 3) {
+      if (input.comboTapCount >= 2) {
         input.comboTapCount = 0;
         input.isDashHold = true;
         startDash();
@@ -1362,6 +1501,8 @@
     // paracaídas abierto = el jugador frena su caída, así que los objetos
     // se le acercan más despacio
     if (Game && Game.player && Game.player.parachuteOpen) speed *= CONFIG.PARACHUTE_SPEED_FACTOR;
+    // en modo ropero los objetos también van mucho más rápido, igual que el fondo
+    if (Game && Game.mode === 'party') speed *= CONFIG.PARTY_OBJECT_SPEED_FACTOR;
     return speed;
   }
 
@@ -1375,8 +1516,8 @@
     if (Game.mode === 'party') return pickOneOf(PARTY_BONUS_TYPES);
     if (Math.random() < CONFIG.PARTY_TRIGGER_CHANCE) return 'wardrobe';
     if (Math.random() < CONFIG.PERIMETRAL_CHANCE) return 'perimetral';
-    if (Math.random() < CONFIG.CHICKENMAN_CHANCE) return 'chickenman';
-    if (Math.random() < 0.12) return pickOneOf(HEAL_TYPES);
+    if (Math.random() < CONFIG.HEART_CHANCE) return 'heart';
+    if (Math.random() < 0.12) return pickOneOf(BONUS_TYPES);
     return pickOneOf(HAZARD_TYPES);
   }
 
@@ -1480,15 +1621,31 @@
   }
 
   // Habilidad especial de una sola vez por partida: se activa al abrir el
-  // paracaídas por primera vez. Limpia todos los obstáculos en pantalla
-  // (incluido el diploma, que normalmente es imposible de agarrar) y muestra
-  // un halo de luz con el cerebrito y la palabra "ego" repetida.
+  // paracaídas por primera vez. El anillo que se expande actúa como un
+  // campo de fuerza: cada obstáculo (hazard) en pantalla queda quieto hasta
+  // que el anillo lo alcanza y recién ahí sale disparado hacia afuera (ver
+  // createBrainSweepParticle), sincronizado con el radio de renderBrainSweep.
+  // Los objetos buenos (corazón, bonus, etc.) quedan intactos para seguir
+  // agarrándolos; también saca el diploma, que normalmente es imposible de
+  // agarrar.
   function triggerBrainMode() {
     Game.brainModeUsed = true;
-    Game.entities = [];
+    var pos = getBrainButtonPos();
+    var maxRadius = Math.hypot(canvasWidth, canvasHeight);
+    var remaining = [];
+    for (var i = 0; i < Game.entities.length; i++) {
+      var e = Game.entities[i];
+      if (ITEM_DEFS[e.type].kind === 'hazard') {
+        var dist = Math.hypot(e.x - pos.x, e.y - pos.y);
+        var delay = clamp(dist / maxRadius, 0, 1) * CONFIG.BRAIN_MODE_HALO_DURATION;
+        Game.particles.push(createBrainSweepParticle(e.x, e.y, pos.x, pos.y, delay, ITEM_DEFS[e.type].emoji));
+      } else {
+        remaining.push(e);
+      }
+    }
+    Game.entities = remaining;
     Game.diploma = null;
     Game.brainModeHaloTimer = CONFIG.BRAIN_MODE_HALO_DURATION;
-    var pos = getBrainButtonPos();
     spawnFloatingText(pos.x, pos.y - CONFIG.BRAIN_BUTTON_SIZE * 0.6, '🧠 MODO CEREBRITO', '#8CFFB0');
     sfxBrainMode();
   }
@@ -1519,13 +1676,28 @@
           } else {
             spawnFloatingText(item.x, item.y, def.text, '#ffe066');
           }
-          if (Game.lives <= 0 && Game.state === 'playing') triggerGameOver();
+          if (Game.lives <= 0 && Game.state === 'playing') startLanding('crash', triggerGameOver);
         }
         break;
       case 'heal':
-        Game.lives = Math.min(Game.lives + 1, CONFIG.PLAYER_MAX_LIVES);
-        Game.score += CONFIG.HEAL_SCORE_BONUS * Game.scoreMultiplier;
-        sfxHeal();
+        if (Game.lives < CONFIG.PLAYER_MAX_LIVES) {
+          var slotIndex = Game.lives;
+          Game.lives++;
+          Game.score += CONFIG.HEAL_SCORE_BONUS * Game.scoreMultiplier;
+          sfxHeal();
+          spawnFloatingText(item.x, item.y, def.text, '#d9b6ff');
+          var target = getHeartSlotTarget(slotIndex);
+          Game.particles.push(createHeartFlyParticle(item.x, item.y, target.x, target.y));
+        } else {
+          // Vida al tope: el corazón no tiene adónde ir, así que solo suma puntos (bonus extra).
+          Game.score += CONFIG.HEART_FULL_BONUS_SCORE * Game.scoreMultiplier;
+          sfxPartyBonus();
+          spawnFloatingText(item.x, item.y, '+3000', '#d9b6ff');
+        }
+        break;
+      case 'bonus':
+        Game.score += CONFIG.ITEM_BONUS_SCORE * Game.scoreMultiplier;
+        sfxPartyBonus();
         spawnFloatingText(item.x, item.y, def.text, '#d9b6ff');
         break;
       case 'partyTrigger':
@@ -1541,13 +1713,6 @@
         spawnHeartParticles(item.x, item.y);
         sfxPartyBonus();
         spawnFloatingText(item.x, item.y, def.text, '#ffe6fa');
-        break;
-      case 'chickenBonus':
-        Game.score += CONFIG.CHICKEN_BONUS_SCORE * Game.scoreMultiplier;
-        Game.player.partyEffectTimer = 1.2;
-        spawnHeartParticles(item.x, item.y);
-        sfxPartyBonus();
-        spawnFloatingText(item.x, item.y, def.text, '#fff3b0');
         break;
       case 'setback':
         Game.altitude = Math.min(CONFIG.ALTITUDE_START, Game.altitude + CONFIG.PERIMETRAL_SETBACK_M);
@@ -1616,7 +1781,7 @@
     for (var i = Game.entities.length - 1; i >= 0; i--) {
       var e = Game.entities[i];
       var kind = ITEM_DEFS[e.type].kind;
-      var rise = (kind === 'partyBonus' || kind === 'chickenBonus') ? speed * 0.9 : speed;
+      var rise = kind === 'partyBonus' ? speed * 0.9 : speed;
       e.y -= rise * dt; // suben de abajo hacia arriba (ver createFallingObject)
       e.wobble += dt * 3;
       if (e.y + e.height / 2 < 0) Game.entities.splice(i, 1);
@@ -1681,6 +1846,41 @@
   function updateParticles(dt) {
     for (var i = Game.particles.length - 1; i >= 0; i--) {
       var pt = Game.particles[i];
+      if (pt.kind === 'heartFly') {
+        // Trayecto propio con lerp (no vy): viaja del punto donde lo
+        // agarraste hasta la posición real en pantalla del corazón vacío.
+        pt.t += dt;
+        var p = clamp(pt.t / pt.duration, 0, 1);
+        var ep = easeOutQuad(p);
+        pt.x = lerp(pt.startX, pt.targetX, ep);
+        pt.y = lerp(pt.startY, pt.targetY, ep);
+        pt.scale = lerp(1, 0.5, ep);
+        pt.life -= dt;
+        if (pt.life <= 0) Game.particles.splice(i, 1);
+        continue;
+      }
+      if (pt.kind === 'brainSweep') {
+        pt.totalT += dt;
+        if (pt.delay > 0) {
+          pt.delay -= dt;
+        } else {
+          pt.vx *= 1 + dt * 1.4; // acelera al salir disparado, como si lo empujara el campo
+          pt.vy *= 1 + dt * 1.4;
+          pt.x += pt.vx * dt;
+          pt.y += pt.vy * dt;
+        }
+        var offscreen = pt.x < -80 || pt.x > canvasWidth + 80 || pt.y < -80 || pt.y > canvasHeight + 80;
+        if (offscreen || pt.totalT > CONFIG.BRAIN_MODE_HALO_DURATION + 1) Game.particles.splice(i, 1);
+        continue;
+      }
+      if (pt.kind === 'dust') {
+        pt.vy += 260 * dt; // gravedad: el estallido inicial hacia arriba termina cayendo
+        pt.x += pt.vx * dt;
+        pt.y += pt.vy * dt;
+        pt.life -= dt;
+        if (pt.life <= 0) Game.particles.splice(i, 1);
+        continue;
+      }
       if (pt.kind === 'confetti') {
         pt.vy += 90 * dt; // gravedad leve para que caigan como confeti real
         pt.rot += pt.rotSpeed * dt;
@@ -1698,9 +1898,9 @@
     // hacia abajo (en vez del drift lento normal hacia arriba): refuerza
     // la sensación de que a Rufo lo mandaron para arriba.
     var perimetralBoost = Game.perimetralEffectTimer > 0 ? CONFIG.PERIMETRAL_CLOUD_BOOST : 0;
-    // En modo ropero las nubes son corazones (ver drawCloud); van más lento
-    // que en modo normal para que no compitan visualmente con los objetos
-    // que suben (bonus del ropero), que son mucho más rápidos.
+    // En modo ropero las nubes son corazones (ver drawCloud); van mucho más
+    // rápido que en modo normal para que el fondo se sienta agitado durante
+    // los pocos segundos que dura el modo.
     var speedFactor = Game.mode === 'party' ? CONFIG.HEART_CLOUD_SPEED_FACTOR : 1;
     for (var i = 0; i < Game.clouds.length; i++) {
       var c = Game.clouds[i];
@@ -1731,6 +1931,7 @@
   }
 
   function update(dt) {
+    if (Game.landing) { updateLanding(dt); return; }
     Game.elapsedTime += dt;
 
     updateDashTimers(dt);
@@ -1759,10 +1960,10 @@
     if (Game.dash.state === 'dying' && Game.state === 'playing' &&
         (Game.altitude <= 0 || Game.dash.deathTimer <= 0)) {
       Game.altitude = 0;
-      triggerCrashDeath();
+      startLanding('crash', triggerCrashDeath);
     } else if (Game.altitude <= 0 && Game.state === 'playing') {
       Game.altitude = 0;
-      triggerWin();
+      startLanding('party', triggerWin);
     }
 
     if (Game.flashTimer > 0) Game.flashTimer -= dt;
@@ -1878,8 +2079,13 @@
   }
 
   function handleDashRelease() {
-    if (Game.dash.state === 'active') cancelDash();
-    else if (Game.dash.state === 'warning') resolveDashWarningSuccess();
+    if (Game.dash.state === 'active') {
+      cancelDash();
+    } else if (Game.dash.state === 'warning') {
+      // Primer paso del gesto de salvataje: soltar no alcanza más por sí
+      // solo, hace falta volver a tocar a tiempo (ver onPointerDown).
+      Game.dash.awaitingRepress = true;
+    }
     // en 'dying' ya no hay nada que hacer: perdiste el control.
   }
 
@@ -2015,6 +2221,96 @@
   // de la caída rápida, que no depende de las vidas).
   function applyLifeRemainingBonus() {
     Game.score += Game.lives * CONFIG.LIFE_REMAINING_BONUS;
+  }
+
+  // Cinemática de cierre: en vez de mostrar el cartel de una, la cámara se
+  // "aleja" (el personaje se achica y cae hasta el piso) y recién al
+  // terminar se llama a finishFn (triggerGameOver/triggerCrashDeath/
+  // triggerWin), que arma el cartel real. Mientras Game.landing esté
+  // activo, update()/render() saltan a updateLanding/renderLandingCinematic
+  // en vez del loop de juego normal (ver ambas funciones más abajo).
+  function startLanding(kind, finishFn) {
+    Game.landing = {
+      kind: kind, // 'crash' | 'party'
+      timer: 0,
+      impactDone: false,
+      startX: Game.player.x,
+      startY: Game.player.y,
+      startWidth: Game.player.width,
+      startHeight: Game.player.height,
+      groundY: canvasHeight * CONFIG.LANDING_GROUND_Y_RATIO,
+      finish: finishFn
+    };
+    Game.player.parachuteOpen = false;
+  }
+
+  function updateLanding(dt) {
+    var L = Game.landing;
+    L.timer += dt;
+    var fallT = clamp(L.timer / CONFIG.LANDING_FALL_DURATION, 0, 1);
+    var ease = fallT * fallT; // acelera como una caída real
+    Game.player.x = lerp(L.startX, canvasWidth / 2, ease);
+    Game.player.y = lerp(L.startY, L.groundY, ease);
+    var scale = lerp(1, CONFIG.LANDING_SHRINK_SCALE, ease);
+    Game.player.width = L.startWidth * scale;
+    Game.player.height = L.startHeight * scale;
+
+    var settleDuration = L.kind === 'crash' ? CONFIG.LANDING_CRASH_SETTLE_DURATION : CONFIG.LANDING_SETTLE_DURATION;
+
+    if (!L.impactDone && fallT >= 1) {
+      L.impactDone = true;
+      Game.flashTimer = 0.35;
+      if (L.kind === 'crash') {
+        spawnExplosion(Game.player.x, L.groundY);
+        sfxCrash();
+      } else {
+        spawnConfetti(Game.player.x, L.groundY);
+        spawnHeartParticles(Game.player.x, L.groundY);
+        spawnFloatingText(Game.player.x, L.groundY - 40, '¡A LA FIESTA!', '#ffe6fa');
+      }
+    }
+
+    updateParticles(dt);
+
+    if (L.timer >= CONFIG.LANDING_FALL_DURATION + settleDuration) {
+      var finish = L.finish;
+      Game.landing = null;
+      finish();
+    }
+  }
+
+  function renderLandingCinematic() {
+    var L = Game.landing;
+    ctx.save();
+    var groundGrad = ctx.createLinearGradient(0, L.groundY, 0, canvasHeight);
+    if (L.kind === 'crash') {
+      groundGrad.addColorStop(0, '#7a5c3a');
+      groundGrad.addColorStop(1, '#4a3620');
+    } else {
+      groundGrad.addColorStop(0, '#ff8fab');
+      groundGrad.addColorStop(1, '#9b59b6');
+    }
+    ctx.fillStyle = groundGrad;
+    ctx.fillRect(0, L.groundY, canvasWidth, canvasHeight - L.groundY);
+    ctx.restore();
+    drawPlayer();
+    renderParticles();
+    renderFlash();
+
+    // Sobre el final de la explosión, la pantalla funde a negro antes de
+    // cortar al cartel de Game Over (que ya es fondo negro): así el corte
+    // se siente intencional en vez de un salto abrupto.
+    if (L.kind === 'crash') {
+      var settleT = clamp((L.timer - CONFIG.LANDING_FALL_DURATION) / CONFIG.LANDING_CRASH_SETTLE_DURATION, 0, 1);
+      var blackout = clamp((settleT - 0.35) / 0.65, 0, 1);
+      if (blackout > 0) {
+        ctx.save();
+        ctx.globalAlpha = blackout;
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+        ctx.restore();
+      }
+    }
   }
 
   function triggerCrashDeath() {
@@ -3070,11 +3366,20 @@
       var a = clamp(pt.life / pt.maxLife, 0, 1);
       ctx.save();
       ctx.globalAlpha = a;
-      if (pt.kind === 'confetti') {
+      if (pt.kind === 'heartFly') {
+        drawEmoji(pt.emoji, pt.x, pt.y, 26 * pt.scale);
+      } else if (pt.kind === 'brainSweep') {
+        drawEmoji(pt.emoji, pt.x, pt.y, CONFIG.OBJECT_SIZE);
+      } else if (pt.kind === 'confetti') {
         ctx.translate(pt.x, pt.y);
         ctx.rotate(pt.rot);
         ctx.fillStyle = pt.color;
         ctx.fillRect(-pt.size / 2, -pt.size / 2, pt.size, pt.size);
+      } else if (pt.kind === 'dust') {
+        ctx.fillStyle = pt.color;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, pt.size * a, 0, Math.PI * 2); // se achica mientras se desvanece
+        ctx.fill();
       } else if (pt.text) {
         ctx.font = 'bold 15px system-ui, -apple-system, sans-serif';
         ctx.textAlign = 'center';
@@ -3092,9 +3397,10 @@
   }
 
   function render() {
+    renderBackground();
+    if (Game.landing) { renderLandingCinematic(); return; }
     var dashing = Game.dash.state !== 'idle';
     var xyloActive = Game.xylo.state === 'active';
-    renderBackground();
     if (dashing) {
       // En caída rápida no hay nubes ni objetos: solo rayas de velocidad.
       renderDashSpeedLines();
@@ -3119,7 +3425,10 @@
 
   function updateHUD() {
     var lives = Math.max(0, Game.lives);
-    hudLivesEl.textContent = '❤️'.repeat(lives) + '🖤'.repeat(CONFIG.PLAYER_MAX_LIVES - lives);
+    for (var i = 0; i < heartSlotEls.length; i++) {
+      heartSlotEls[i].textContent = i < lives ? '❤️' : '🖤';
+    }
+    hudPointsEl.textContent = 'Score: ' + Math.floor(Game.score);
     hudScoreEl.textContent = formatAltitude(Game.altitude) + (Game.mode === 'party' ? ' 🏳️‍🌈' : '');
 
     // Progreso de la caída: 0% recién saltado (avión, arriba) -> 100% en el piso (abajo).
