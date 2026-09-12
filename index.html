@@ -120,6 +120,12 @@
     text-transform: uppercase;
     letter-spacing: 1px;
   }
+  #newRecordText {
+    color: #ffcc00;
+    font-weight: 700;
+    text-shadow: 2px 2px 0 #000;
+    opacity: 1;
+  }
   .overlay button {
     margin-top: 8px;
     font-family: inherit;
@@ -323,6 +329,7 @@
 <div id="overlayGameOver" class="overlay">
   <h1 id="overlayTitle">Game Over</h1>
   <p id="finalScoreText"></p>
+  <p id="newRecordText" style="display:none;">¡Felicitaciones, nuevo récord!</p>
   <button id="btnRetry">Reintentar</button>
   <div id="leaderboardBox">
     <div id="nameEntry">
@@ -573,6 +580,7 @@
   var overlayGameOverEl = document.getElementById('overlayGameOver');
   var overlayTitleEl = document.getElementById('overlayTitle');
   var finalScoreTextEl = document.getElementById('finalScoreText');
+  var newRecordTextEl = document.getElementById('newRecordText');
   var btnRetryEl = document.getElementById('btnRetry');
   var playerNameInputEl = document.getElementById('playerNameInput');
   var btnSaveNameEl = document.getElementById('btnSaveName');
@@ -1316,6 +1324,7 @@
   // guarda ni muestra nada).
   var LEADERBOARD_URL = 'https://script.google.com/macros/s/AKfycbxaznvcrTCYjkftpx7cBE8pEuyg_lB77taLQaFSMOrZ20NF6ExmaAzgFWvwYokvgLJgCA/exec';
   var PLAYER_NAME_KEY = 'ruffus_player_name';
+  var BEST_SCORE_KEY = 'ruffus_best_score';
   var lastRunScore = 0;
   var lastRunOutcome = '';
 
@@ -1330,6 +1339,13 @@
     try { localStorage.setItem(PLAYER_NAME_KEY, name); } catch (err) {}
   }
 
+  function getStoredBestScore() {
+    try { return parseFloat(localStorage.getItem(BEST_SCORE_KEY)) || 0; } catch (err) { return 0; }
+  }
+  function setStoredBestScore(score) {
+    try { localStorage.setItem(BEST_SCORE_KEY, String(score)); } catch (err) {}
+  }
+
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -1337,9 +1353,9 @@
   }
 
   function submitScore(name, score, outcome) {
-    if (!leaderboardConfigured()) return;
+    if (!leaderboardConfigured()) return null;
     // text/plain evita el preflight CORS que Apps Script no maneja bien.
-    fetch(LEADERBOARD_URL, {
+    return fetch(LEADERBOARD_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ name: name || 'Anónimo', score: Math.floor(score), outcome: outcome || '' })
@@ -1378,8 +1394,14 @@
   function setupLeaderboardForResult(score, outcome) {
     lastRunScore = score;
     lastRunOutcome = outcome;
+    if (score > getStoredBestScore()) {
+      setStoredBestScore(score);
+      newRecordTextEl.style.display = 'block';
+    } else {
+      newRecordTextEl.style.display = 'none';
+    }
     var stored = getStoredPlayerName();
-    submitScore(stored || 'Anónimo', score, outcome);
+    var submitPromise = submitScore(stored || 'Anónimo', score, outcome);
     if (stored) {
       nameEntryEl.style.display = 'none';
       playingAsTextEl.style.display = 'block';
@@ -1389,7 +1411,11 @@
       playingAsTextEl.style.display = 'none';
       playerNameInputEl.value = '';
     }
-    loadLeaderboard();
+    if (submitPromise) {
+      submitPromise.then(loadLeaderboard);
+    } else {
+      loadLeaderboard();
+    }
   }
 
   btnSaveNameEl.addEventListener('click', function () {
@@ -1398,8 +1424,12 @@
     nameEntryEl.style.display = 'none';
     playingAsTextEl.style.display = 'block';
     playingAsTextEl.textContent = 'Jugás como ' + name;
-    submitScore(name, lastRunScore, lastRunOutcome);
-    setTimeout(loadLeaderboard, 400);
+    var submitPromise = submitScore(name, lastRunScore, lastRunOutcome);
+    if (submitPromise) {
+      submitPromise.then(loadLeaderboard);
+    } else {
+      loadLeaderboard();
+    }
   });
 
   function resetFeedbackBox() {
