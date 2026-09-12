@@ -525,7 +525,8 @@
     ZIPLINE_TILT_MAX: 0.35,
     ZIPLINE_BG_SCROLL_SPEED: 60,    // px/seg del parallax de fondo
     ZIPLINE_DISTANCE_START: 8000,   // "metros" de tirolesa a recorrer (análogo a ALTITUDE_START)
-    ZIPLINE_SCROLL_SPEED: 90        // avance automático (8000/90 ≈ 89s de partida)
+    ZIPLINE_SCROLL_SPEED: 90,       // avance automático (8000/90 ≈ 89s de partida)
+    ZIPLINE_CABLE_ATTACH_RATIO: 0.4 // qué tan arriba del centro del sprite agarra el cable (0 = centro, 0.5 = borde superior)
   };
 
   // Definición central de tipos de objeto: emoji + comportamiento + texto
@@ -3109,8 +3110,34 @@
     }
   }
 
+  // La soga/cable tensado de punta a punta de la pantalla, a la altura
+  // donde el trolley del sprite lo agarra (ver ZIPLINE_CABLE_ATTACH_RATIO);
+  // sigue a Game.player.y así que sube y baja junto con el personaje. Una
+  // leve inclinación entre los dos extremos y un brillo fino encima dan
+  // sensación de tensión/metal en vez de una línea plana.
+  function drawZiplineCable() {
+    var p = Game.player;
+    var attachY = p.y - CONFIG.ZIPLINE_SPRITE_HEIGHT * CONFIG.ZIPLINE_CABLE_ATTACH_RATIO;
+    ctx.save();
+    ctx.strokeStyle = '#3a3f47';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, attachY - 8);
+    ctx.lineTo(canvasWidth, attachY + 8);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, attachY - 10);
+    ctx.lineTo(canvasWidth, attachY + 6);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function renderZiplineMode() {
     renderZiplineBackground();
+    drawZiplineCable();
     renderEntities();
     drawZiplinePlayer();
     renderParticles();
