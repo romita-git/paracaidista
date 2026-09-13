@@ -208,7 +208,24 @@
     padding: 4px 8px;
   }
   #leaderboardList .lbScore { font-weight: 700; }
+  #leaderboardList li.ownScore {
+    background: rgba(255,204,0,.35);
+    border: 2px solid #ffcc00;
+    padding: 2px 6px;
+  }
   .leaderboardStatus { margin: 0; opacity: .7; font-size: 12px; }
+  #btnRetryLeaderboard {
+    margin-top: 4px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 6px 14px;
+    border-radius: 0;
+    border: 2px solid #222;
+    background: #ffcc00;
+    color: #222;
+  }
   #feedbackBox {
     margin-top: 8px;
     width: min(320px, 82vw);
@@ -372,7 +389,7 @@
     <p>🪂 Toque corto: abrís o cerrás el paracaídas (frena la caída).</p>
     <p>⚡ Doble toque y mantené apretado: caída libre a toda velocidad. Es de un solo uso por partida y arriesgado: cuando aparece el cartel, soltá el dedo y volvé a tocar en menos de un segundo o te estrellás.</p>
     <p>🧠 El cerebrito aparece solo, arriba de tu cabeza: tocalo para limpiar la pantalla de obstáculos. También de un solo uso.</p>
-    <p>🟢 Los objetos con halo verde te curan. Esquivá el resto.</p>
+    <p>🟢 Los objetos con halo verde son buenos (solo el corazón cura, el resto de esos da puntos). Esquivá los que no tienen halo.</p>
   </div>
   <button id="btnFaqClose">Entendido</button>
 </div>
@@ -526,7 +543,14 @@
     ZIPLINE_BG_SCROLL_SPEED: 60,    // px/seg del parallax de fondo
     ZIPLINE_DISTANCE_START: 8000,   // "metros" de tirolesa a recorrer (análogo a ALTITUDE_START)
     ZIPLINE_SCROLL_SPEED: 90,       // avance automático (8000/90 ≈ 89s de partida)
-    ZIPLINE_CABLE_ATTACH_RATIO: 0.4 // qué tan arriba del centro del sprite agarra el cable (0 = centro, 0.5 = borde superior)
+    ZIPLINE_CABLE_ATTACH_RATIO: 0.4, // qué tan arriba del centro del sprite agarra el cable (0 = centro, 0.5 = borde superior)
+
+    // Cinemática de "llegar al otro lado" al ganar la tirolesa (en vez de
+    // reusar la caída genérica del modo paracaidista): el personaje sigue
+    // colgado del cable pero desliza en horizontal hasta la plataforma.
+    ZIPLINE_ARRIVAL_X_RATIO: 0.88,
+    ZIPLINE_ARRIVAL_SLIDE_DURATION: 1.0,
+    ZIPLINE_ARRIVAL_SETTLE_DURATION: 0.9
   };
 
   // Definición central de tipos de objeto: emoji + comportamiento + texto
@@ -833,6 +857,7 @@
       altitude: CONFIG.ALTITUDE_START,
       ziplineDistance: CONFIG.ZIPLINE_DISTANCE_START,
       ziplineBgOffset: 0,
+      ziplineArrival: null,        // cinemática de "llegar al otro lado" al ganar (ver startZiplineArrival)
       spawnAccumulator: 0,
       entities: [],
       particles: [],
@@ -876,7 +901,19 @@
 
   function ensureAudio() {
     if (!audioCtx) {
-      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (err) { audioCtx = null; }
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // Desbloqueo de Safari/iOS: reproducir un buffer mudo dentro del
+        // mismo gesto de usuario activa de verdad el hardware de audio del
+        // teléfono. Sin esto, en iPhone el AudioContext puede quedar
+        // "running" en el estado pero los osciladores programados después
+        // (fuera de esta llamada sincrónica) no llegan a sonar.
+        var unlockBuffer = audioCtx.createBuffer(1, 1, 22050);
+        var unlockSource = audioCtx.createBufferSource();
+        unlockSource.buffer = unlockBuffer;
+        unlockSource.connect(audioCtx.destination);
+        unlockSource.start(0);
+      } catch (err) { audioCtx = null; }
     } else if (audioCtx.state === 'suspended') {
       audioCtx.resume();
     }
@@ -1215,7 +1252,11 @@
     // así no se puede abrir/cerrar el paracaídas ni disparar nada por
     // accidente mientras la cámara se aleja).
     if (Game.landing) { e.preventDefault(); return; }
-    if (Game.gameType === 'zipline') { onZiplinePointerDown(e); return; }
+    if (Game.gameType === 'zipline') {
+      if (Game.ziplineArrival) { e.preventDefault(); return; }
+      onZiplinePointerDown(e);
+      return;
+    }
 
     // Segundo paso del gesto de salvataje en la ventana de alerta: ya
     // soltaste una vez (ver onPointerUp/onPointerCancel) y volviste a tocar
@@ -1384,7 +1425,11 @@
   canvas.addEventListener('pointercancel', onPointerCancel, { passive: false });
 
   btnRetryEl.addEventListener('click', function () {
+    // En vez de reintentar directo en el mismo modo, vuelve a la pantalla
+    // de inicio para que se pueda elegir Saltar o Tirolesa de nuevo.
     resetGame();
+    Game.state = 'start';
+    overlayStartEl.classList.add('visible');
   });
 
   // ==== FEEDBACK: sugerencias para la próxima versión, van a un Google Form ====
@@ -1440,9 +1485,16 @@
       leaderboardListEl.innerHTML = '<p class="leaderboardStatus">Todavía no hay puntajes.</p>';
       return;
     }
+    // Resalta la fila que corresponde al resultado que acabás de jugar,
+    // para que de un vistazo veas si entraste al top 10 y dónde. Compara
+    // por nombre guardado + score exacto de esta partida (no hay id único
+    // en la hoja de cálculo, así que puede haber falsos positivos si dos
+    // entradas coinciden justo en ambos valores; riesgo aceptable acá).
+    var myName = getStoredPlayerName();
     var html = '<ol>';
     entries.slice(0, 10).forEach(function (e, i) {
-      html += '<li><span>' + (i + 1) + '. ' + escapeHtml(e.name) + '</span><span class="lbScore">' + Math.floor(e.score) + '</span></li>';
+      var isMine = myName && e.name === myName && Math.floor(e.score) === Math.floor(lastRunScore);
+      html += '<li class="' + (isMine ? 'ownScore' : '') + '"><span>' + (i + 1) + '. ' + escapeHtml(e.name) + '</span><span class="lbScore">' + Math.floor(e.score) + '</span></li>';
     });
     html += '</ol>';
     leaderboardListEl.innerHTML = html;
@@ -1458,7 +1510,12 @@
       .then(function (r) { return r.json(); })
       .then(renderLeaderboard)
       .catch(function () {
-        leaderboardListEl.innerHTML = '<p class="leaderboardStatus">No se pudo cargar el ranking.</p>';
+        // Botón propio en vez de reintentar solo: en una red de celular
+        // débil (el caso típico donde esto falla) es mejor dejar que la
+        // persona reintente cuando quiera, no ametrallar el mismo fetch.
+        leaderboardListEl.innerHTML = '<p class="leaderboardStatus">No se pudo cargar el ranking.</p><button id="btnRetryLeaderboard" type="button">Reintentar</button>';
+        var retryBtn = document.getElementById('btnRetryLeaderboard');
+        if (retryBtn) retryBtn.addEventListener('click', loadLeaderboard);
       });
   }
 
@@ -1901,6 +1958,8 @@
   // mueven los objetos (x en vez de y) y el personaje (y en vez de x).
   // Ningún tipo de modo especial (wardrobe/perimetral) puede salir acá.
   function pickZiplineType() {
+    if (Game.mode === 'party') return pickOneOf(PARTY_BONUS_TYPES);
+    if (Math.random() < CONFIG.PARTY_TRIGGER_CHANCE) return 'wardrobe';
     if (Math.random() < CONFIG.HEART_CHANCE) return 'heart';
     if (Math.random() < 0.12) return pickOneOf(BONUS_TYPES);
     return pickOneOf(HAZARD_TYPES);
@@ -1934,13 +1993,20 @@
     var slots = numObjects + 1;
     var slotHeight = playableHeight / slots;
     var emptySlotIndex = randInt(0, slots - 1);
+    var wardrobeAlreadyInWave = false;
 
     for (var i = 0; i < slots; i++) {
       if (i === emptySlotIndex) continue;
       var slotCenter = margin + slotHeight * i + slotHeight / 2;
       var jitter = (Math.random() - 0.5) * slotHeight * 0.4;
       var y = clamp(slotCenter + jitter, margin, canvasHeight - margin);
-      Game.entities.push(createZiplineObject(pickZiplineType(), y));
+      var type = pickZiplineType();
+      // como mucho un ropero por oleada, para no saturar el evento especial
+      if (type === 'wardrobe') {
+        if (wardrobeAlreadyInWave) type = pickOneOf(HAZARD_TYPES);
+        else wardrobeAlreadyInWave = true;
+      }
+      Game.entities.push(createZiplineObject(type, y));
     }
   }
 
@@ -1971,16 +2037,22 @@
     p.y = clamp(p.y, margin, canvasHeight - margin);
     p.tilt = clamp(p.vy * CONFIG.ZIPLINE_TILT_FACTOR, -CONFIG.ZIPLINE_TILT_MAX, CONFIG.ZIPLINE_TILT_MAX);
     if (p.invulnerableTimer > 0) p.invulnerableTimer -= dt;
+    if (p.partyEffectTimer > 0) p.partyEffectTimer -= dt;
   }
 
   function updateZiplineBackground(dt) {
-    Game.ziplineBgOffset += CONFIG.ZIPLINE_BG_SCROLL_SPEED * dt;
+    // En modo ropero el fondo también se acelera mucho, mismo factor que
+    // usan los corazones de fondo en el paracaidista (ver HEART_CLOUD_SPEED_FACTOR).
+    var speedFactor = Game.mode === 'party' ? CONFIG.HEART_CLOUD_SPEED_FACTOR : 1;
+    Game.ziplineBgOffset += CONFIG.ZIPLINE_BG_SCROLL_SPEED * speedFactor * dt;
   }
 
   // Punto de entrada de todo el modo (ver el guard en update()): igual que
-  // el update() de skydive pero sin altitud/dash/xilófono/cerebrito/ropero,
-  // con la distancia de la tirolesa como reloj en vez de la altitud.
+  // el update() de skydive pero sin altitud/dash/xilófono/cerebrito, con la
+  // distancia de la tirolesa como reloj en vez de la altitud. El ropero SÍ
+  // existe acá (ver pickZiplineType) porque el usuario lo pidió explícito.
   function updateZipline(dt) {
+    if (Game.ziplineArrival) { updateZiplineArrival(dt); return; }
     Game.elapsedTime += dt;
     Game.ziplineDistance -= CONFIG.ZIPLINE_SCROLL_SPEED * dt;
     Game.score += CONFIG.ZIPLINE_SCROLL_SPEED * dt * CONFIG.ALTITUDE_SCORE_PER_METER * Game.scoreMultiplier;
@@ -1996,12 +2068,47 @@
     updateZiplinePlayer(dt);
     updateZiplineEntities(dt);
     updateZiplineBackground(dt);
+    updatePartyMode(dt);
     updateParticles(dt);
     checkCollisions();
 
     if (Game.ziplineDistance <= 0 && Game.state === 'playing') {
       Game.ziplineDistance = 0;
-      startLanding('party', triggerWin);
+      startZiplineArrival();
+    }
+  }
+
+  // Al ganar, en vez de reusar la caída genérica del modo paracaidista
+  // (que no tiene sentido acá: no hay piso al que caer), el personaje
+  // sigue colgado del cable y desliza en horizontal hasta una plataforma
+  // del otro lado. Mismo patrón que startLanding/updateLanding: no cambia
+  // Game.state hasta el final, así que update()/render() (ya redirigidos a
+  // updateZipline/renderZiplineMode) delegan acá mientras dura.
+  function startZiplineArrival() {
+    Game.ziplineArrival = { timer: 0, startX: Game.player.x, celebrated: false };
+  }
+
+  function updateZiplineArrival(dt) {
+    var a = Game.ziplineArrival;
+    a.timer += dt;
+    var slideT = clamp(a.timer / CONFIG.ZIPLINE_ARRIVAL_SLIDE_DURATION, 0, 1);
+    var ease = easeOutQuad(slideT);
+    Game.player.x = lerp(a.startX, canvasWidth * CONFIG.ZIPLINE_ARRIVAL_X_RATIO, ease);
+    Game.player.tilt = lerp(Game.player.tilt, 0, ease); // se endereza al llegar a la plataforma
+
+    if (!a.celebrated && slideT >= 1) {
+      a.celebrated = true;
+      spawnPartyCelebration(Game.player.x, Game.player.y);
+      spawnFloatingText(Game.player.x, Game.player.y - 60, '¡LLEGASTE AL OTRO LADO!', '#ffe6fa');
+      sfxWin();
+    }
+
+    updateParticles(dt);
+
+    var total = CONFIG.ZIPLINE_ARRIVAL_SLIDE_DURATION + CONFIG.ZIPLINE_ARRIVAL_SETTLE_DURATION;
+    if (a.timer >= total) {
+      Game.ziplineArrival = null;
+      triggerWin();
     }
   }
 
@@ -3092,6 +3199,9 @@
       drawPlayerPlaceholder(p);
     }
     ctx.restore();
+    if (p.partyEffectTimer > 0) {
+      drawEmoji('🤩', p.x, p.y - CONFIG.ZIPLINE_SPRITE_HEIGHT * 0.75, 28);
+    }
   }
 
   // Fondo de la tirolesa: nubes recicladas que se mueven con
@@ -3135,7 +3245,32 @@
     ctx.restore();
   }
 
+  // Plataforma del otro lado de la tirolesa: un poste + una tabla, dibujados
+  // con primitivas de canvas (mismo criterio que drawParachute) ya que no
+  // hay sprite propio para esto.
+  function drawZiplinePlatform() {
+    var x = canvasWidth * CONFIG.ZIPLINE_ARRIVAL_X_RATIO;
+    ctx.save();
+    ctx.fillStyle = '#6b4a2f';
+    ctx.fillRect(x - 9, canvasHeight * 0.35, 18, canvasHeight * 0.65);
+    ctx.fillStyle = '#8a5f3d';
+    ctx.fillRect(x - 72, canvasHeight * 0.32, 144, 18);
+    ctx.fillStyle = '#5a3d26';
+    ctx.fillRect(x - 72, canvasHeight * 0.32 + 18, 144, 5);
+    ctx.restore();
+  }
+
+  function renderZiplineArrival() {
+    renderZiplineBackground();
+    drawZiplineCable();
+    drawZiplinePlatform();
+    drawZiplinePlayer();
+    renderParticles();
+    renderFlash();
+  }
+
   function renderZiplineMode() {
+    if (Game.ziplineArrival) { renderZiplineArrival(); return; }
     renderZiplineBackground();
     drawZiplineCable();
     renderEntities();
@@ -3630,9 +3765,9 @@
       var e = Game.entities[i];
       var wob = Math.sin(e.wobble) * 4;
       var def = ITEM_DEFS[e.type];
-      // Los objetos buenos (los que dan vida) llevan un halo para que se
-      // distingan de un vistazo de los que hacen daño.
-      if (def.kind === 'heal') drawHealHalo(e.x + wob, e.y, CONFIG.OBJECT_SIZE);
+      // Los objetos buenos (heal = cura, bonus = solo puntos) llevan un
+      // halo para que se distingan de un vistazo de los que hacen daño.
+      if (def.kind === 'heal' || def.kind === 'bonus') drawHealHalo(e.x + wob, e.y, CONFIG.OBJECT_SIZE);
       if (e.type === 'wardrobe') {
         drawWardrobeHalo(e.x + wob, e.y, CONFIG.OBJECT_SIZE);
         drawWardrobeIcon(e.x + wob, e.y, CONFIG.OBJECT_SIZE);
@@ -3789,7 +3924,7 @@
     }
     hudPointsEl.textContent = 'Score: ' + Math.floor(Game.score);
     if (Game.gameType === 'zipline') {
-      hudScoreEl.textContent = formatAltitude(Game.ziplineDistance);
+      hudScoreEl.textContent = formatAltitude(Game.ziplineDistance) + (Game.mode === 'party' ? ' 🏳️‍🌈' : '');
     } else {
       hudScoreEl.textContent = formatAltitude(Game.altitude) + (Game.mode === 'party' ? ' 🏳️‍🌈' : '');
       // Progreso de la caída: 0% recién saltado (avión, arriba) -> 100% en el piso (abajo).
