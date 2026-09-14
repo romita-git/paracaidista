@@ -2764,6 +2764,16 @@
     return off;
   }
   function drawEmoji(emoji, x, y, size) {
+    // Si ese emoji tiene sprite pixel-art propio se usa ese (ver
+    // EMOJI_SPRITE_ALIASES); el emoji del sistema queda solo de fallback.
+    var aliased = EMOJI_SPRITE_ALIASES[emoji];
+    if (aliased) {
+      var sprite = getPixelSprite(aliased);
+      if (sprite) {
+        drawPixelSprite(sprite, x, y, size);
+        return;
+      }
+    }
     ctx.drawImage(getEmojiSprite(emoji), x - size / 2, y - size / 2, size, size);
   }
 
@@ -2885,6 +2895,384 @@
     }
     heartSpriteCache = off;
     return heartSpriteCache;
+  }
+
+  // ==== SPRITES PIXEL-ART DE LOS OBJETOS ====
+  // Antes cada objeto se dibujaba con el emoji del sistema, que cambia de
+  // estilo según el dispositivo (Apple/Android/Windows) y desentona con el
+  // pixel art del personaje y las nubes. Ahora cada uno es una grilla de
+  // caracteres -> color de su paleta ('.' = transparente) que se rasteriza
+  // una sola vez a un canvas auxiliar (mismo truco que la nube) y después se
+  // pinta escalado con drawImage, así el juego entero tiene el mismo look.
+  var PIXEL_SPRITE_PALETTES = {
+    bottle:      { k: '#20301c', g: '#2f7d32', l: '#63c165', y: '#e8b923', c: '#c98f5a' },
+    chard:       { k: '#154d1a', g: '#3f9c42', l: '#7cc576', w: '#e4f3c9' },
+    lawsuit:     { k: '#5b5b5b', w: '#ffffff', t: '#4a4a4a', r: '#d32f2f' },
+    punch:       { k: '#5a0d12', r: '#e53935', d: '#a11f1f', w: '#f5f5f5', t: '#8d6e63' },
+    tire:        { k: '#0d0d0d', d: '#2f2f2f', s: '#9aa0a6', w: '#d8dce0' },
+    chocolate:   { k: '#2e1a3a', p: '#7b4fa3', P: '#a274c9', w: '#ffffff', b: '#5d3317', B: '#7d4a24' },
+    vasectomy:   { k: '#2b2b2b', s: '#b0bec5', r: '#e53935' },
+    savings:     { k: '#4a3b1e', b: '#c8a165', B: '#e3c48f', d: '#8d6e3a', y: '#f1c40f', w: '#fff3cf' },
+    heart:       { k: '#7a0d22', r: '#e8344e', w: '#ffd6dd' },
+    eggplant:    { k: '#2a1533', p: '#7b3f9d', P: '#a163c9', d: '#4e2465', g: '#3d8b3d', l: '#6ab04c' },
+    tanktop:     { k: '#12304d', b: '#2e86de', B: '#5ba9f0', w: '#ffffff' },
+    rainbowflag: { k: '#3a2a1a', n: '#8d6e3a', '1': '#e40303', '2': '#ff8c00', '3': '#ffed00', '4': '#008026', '5': '#004dff', '6': '#750787' },
+    perimetral:  { k: '#14203d', b: '#2c3e77', B: '#4661ad', s: '#f2c19a', w: '#ffffff', y: '#f1c40f' },
+    // Estos no son objetos que caen: son los íconos/efectos que antes
+    // también eran emojis (ver EMOJI_SPRITE_ALIASES).
+    brain:       { k: '#7a3b5e', p: '#f19ab8', P: '#f8c6d8', d: '#c76a8f' },
+    diploma:     { k: '#6b5230', w: '#f4e4c1', s: '#dcc9a0', r: '#c0392b' },
+    fire:        { k: '#7a2a00', r: '#e8491d', o: '#f79c12', y: '#ffd43b' },
+    boom:        { k: '#7a2a00', o: '#f79c12', y: '#ffd43b', w: '#fff6cc' },
+    arrowUp:     { k: '#0d3b66', b: '#2e86de', w: '#cfe8ff' }
+  };
+
+  var PIXEL_SPRITE_GRIDS = {
+    bottle: [
+      '.......kk.......',
+      '......kcck......',
+      '......kcck......',
+      '.......kk.......',
+      '......kggk......',
+      '......kglk......',
+      '......kglk......',
+      '.....kyyyyk.....',
+      '....kyyyyyyk....',
+      '...kgglggggk....',
+      '...kgglggggk....',
+      '...kgglggggk....',
+      '...kgglggggk....',
+      '...kgglggggk....',
+      '...kkkkkkkkk....'
+    ],
+    chard: [
+      '....k.....k.....',
+      '...klk...klk....',
+      '..kglgk.kglgk...',
+      '..kgllgkgllgk...',
+      '.kgllllgllllgk..',
+      '.kglllllllllgk..',
+      '.kgllllwllllgk..',
+      '.kgllllwllllgk..',
+      '..kglllwlllgk...',
+      '..kglllwlllgk...',
+      '...kgllwllgk....',
+      '....kklwlkk.....',
+      '......kwk.......',
+      '......kwk.......',
+      '.....kkwkk......'
+    ],
+    lawsuit: [
+      '...kkkkkkkkkk...',
+      '...kwwwwwwwwk...',
+      '...kwttttttwk...',
+      '...kwwwwwwwwk...',
+      '...kwttttttwk...',
+      '...kwwwwwwwwk...',
+      '...kwttttttwk...',
+      '...kwwwwwwwwk...',
+      '...kwttttwwwk...',
+      '...kwwwwwwwwk...',
+      '...kwwrrwwwwk...',
+      '...kwwrrwwwwk...',
+      '...kwwwwwwwwk...',
+      '...kkkkkkkkkk...'
+    ],
+    punch: [
+      '....kkkkkkk.....',
+      '..kkrrrrrrrkk...',
+      '.krrrrrrrrrrrk..',
+      'krrrrrrrrrrrrrk.',
+      'krrkrrrrrrrrrrk.',
+      'krrkdrrrrrrrrrk.',
+      'krrkdrrrrrrrrrk.',
+      'krrrdrrrrrrrrrk.',
+      '.krrrrrrrrrrrrk.',
+      '..krrrrrrrrrrk..',
+      '..kwwwwwwwwwwk..',
+      '..kwkwkwkwkwwk..',
+      '..kttttttttttk..',
+      '..kkkkkkkkkkkk..'
+    ],
+    tire: [
+      '.....kkkkkk.....',
+      '...kkddddddkk...',
+      '..kddddddddddk..',
+      '.kdddssssssdddk.',
+      'kdddsswwwwssdddk',
+      'kddsswwwwwwssddk',
+      'kddswwwwwwwwsddk',
+      'kddswwwwwwwwsddk',
+      'kddsswwwwwwssddk',
+      'kdddsswwwwssdddk',
+      '.kdddssssssdddk.',
+      '..kddddddddddk..',
+      '...kkddddddkk...',
+      '.....kkkkkk.....'
+    ],
+    chocolate: [
+      '..kkkkkkkkkkkk..',
+      '..kppppkbbbbbk..',
+      '..kpPPpkbBBBbk..',
+      '..kpPPpkbbbbbk..',
+      '..kpwwpkbBBBbk..',
+      '..kpwwpkbbbbbk..',
+      '..kpPPpkbBBBbk..',
+      '..kpPPpkbbbbbk..',
+      '..kppppkbBBBbk..',
+      '..kkkkkkkkkkkk..'
+    ],
+    vasectomy: [
+      '..kkk......kkk..',
+      '..kssk....kssk..',
+      '...kssk..kssk...',
+      '....ksskkssk....',
+      '.....ksskssk....',
+      '......ksssk.....',
+      '......kssk......',
+      '.....krrkrrk....',
+      '....krrrkrrrk...',
+      '...krrkkkkrrk...',
+      '...krrk..krrk...',
+      '...krrk..krrk...',
+      '...krrrkkrrrk...',
+      '....kkkkkkkk....'
+    ],
+    savings: [
+      '......kkkk......',
+      '.....kddddk.....',
+      '....kdwwwwdk....',
+      '...kbbbbbbbbk...',
+      '..kbbBBBBBBbbk..',
+      '.kbbBByyyyBBbbk.',
+      '.kbBByyyyyyBBbk.',
+      'kbbBByyyyyyBBbbk',
+      'kbbBBByyyyBBBbbk',
+      'kbbBBByyyyBBBbbk',
+      'kbbbBByyyyBBbbbk',
+      '.kbbbBBBBBBbbbk.',
+      '..kbbbbbbbbbbk..',
+      '...kkkkkkkkkk...'
+    ],
+    heart: [
+      '...kkk....kkk...',
+      '..krrrk..krrrk..',
+      '.krwwrrkkrrrrrk.',
+      'krwwwrrrrrrrrrrk',
+      'krwwrrrrrrrrrrrk',
+      'krwrrrrrrrrrrrrk',
+      'krrrrrrrrrrrrrrk',
+      '.krrrrrrrrrrrrk.',
+      '..krrrrrrrrrrk..',
+      '...krrrrrrrrk...',
+      '....krrrrrrk....',
+      '.....krrrrk.....',
+      '......krrk......',
+      '.......kk.......'
+    ],
+    eggplant: [
+      '.........gg.....',
+      '........glgk....',
+      '.......glglk....',
+      '......kgggk.....',
+      '.....kdPPpdk....',
+      '....kdPPPppdk...',
+      '...kdPPPpppdk...',
+      '...kdPPpppppk...',
+      '...kdPppppppk...',
+      '...kdppppppdk...',
+      '...kdppppppdk...',
+      '....kdppppdk....',
+      '.....kddddk.....',
+      '......kkkk......'
+    ],
+    tanktop: [
+      '..kk........kk..',
+      '.kbbk......kbbk.',
+      '.kbbk......kbbk.',
+      '.kbbbk....kbbbk.',
+      '.kbbbbkkkkbbbbk.',
+      '.kbbbbbbbbbbbbk.',
+      '.kbBBBBBBBBBBbk.',
+      '.kbBwwwwwwwwBbk.',
+      '.kbBBBBBBBBBBbk.',
+      '.kbbbbbbbbbbbbk.',
+      '.kbbbbbbbbbbbbk.',
+      '.kbbbbbbbbbbbbk.',
+      '.kbbbbbbbbbbbbk.',
+      '.kkkkkkkkkkkkkk.'
+    ],
+    rainbowflag: [
+      '.kn.............',
+      '.knkkkkkkkkkkk..',
+      '.kn111111111k...',
+      '.kn222222222k...',
+      '.kn333333333k...',
+      '.kn444444444k...',
+      '.kn555555555k...',
+      '.kn666666666k...',
+      '.knkkkkkkkkkkk..',
+      '.kn.............',
+      '.kn.............',
+      '.kn.............',
+      '.kn.............',
+      '.kkk............'
+    ],
+    perimetral: [
+      '....kkkkkkkk....',
+      '...kbbbbbbbbbk..',
+      '...kbbbyybbbbk..',
+      '..kkkkkkkkkkkkk.',
+      '....kssssssk....',
+      '....kskssksk....',
+      '....kssssssk....',
+      '....ksskkssk....',
+      '.....kssssk.....',
+      '...kbbbbbbbbk...',
+      '..kbbBBBBBBbbk..',
+      '..kbbBwwwwBbbk..',
+      '..kbbbbbbbbbbk..',
+      '..kkkkkkkkkkkk..'
+    ],
+    brain: [
+      '....kkkkkkkk....',
+      '..kkpppkkpppkk..',
+      '.kppPppkkppPppk.',
+      'kpPppdpkkpdppPpk',
+      'kppdpppkkpppdppk',
+      'kpdppPpkkpPppdpk',
+      'kppdpppkkpppdppk',
+      'kpppdPpkkpPdpppk',
+      '.kppdppkkppdppk.',
+      '.kpppdpkkpdpppk.',
+      '..kppdppppdppk..',
+      '..kkppppppppkk..',
+      '....kkkkkkkk....'
+    ],
+    diploma: [
+      '..kkkkkkkkkkkk..',
+      '..kssssssssssk..',
+      '..kwwwwwwwwwwk..',
+      '..kwsswwwwsswk..',
+      '..kwwwwwwwwwwk..',
+      '..kwsswwwwsswk..',
+      '..kwwwwwwwwwwk..',
+      '..krrrrrrrrrrk..',
+      '..kwwwwwwwwwwk..',
+      '..kwsswwwwsswk..',
+      '..kwwwwwwwwwwk..',
+      '..kssssssssssk..',
+      '..kkkkkkkkkkkk..'
+    ],
+    fire: [
+      '.......k........',
+      '......krk.......',
+      '.....krrk.......',
+      '....krrork......',
+      '...krrookrk.....',
+      '...krooyork.....',
+      '..kroyyyyork....',
+      '..kroyyyyork....',
+      '..kroyyyyoork...',
+      '..krooyyooork...',
+      '...krooooork....',
+      '....krrrrrk.....',
+      '.....kkkkk......'
+    ],
+    boom: [
+      '.......kk.......',
+      '...k...oo...k...',
+      '....k.kook.k....',
+      '.....koyyok.....',
+      '..k..oyyyyo..k..',
+      '...kkoywwyokk...',
+      'kkooyywwwwyyookk',
+      '...kkoywwyokk...',
+      '..k..oyyyyo..k..',
+      '.....koyyok.....',
+      '....k.kook.k....',
+      '...k...oo...k...',
+      '.......kk.......'
+    ],
+    arrowUp: [
+      '.......kk.......',
+      '......kbbk......',
+      '.....kbwwbk.....',
+      '....kbbwwbbk....',
+      '...kbbbwwbbbk...',
+      '..kbbbbwwbbbbk..',
+      '.kbbbbbwwbbbbbk.',
+      'kkkkkbbwwbbkkkkk',
+      '....kbbwwbbk....',
+      '....kbbwwbbk....',
+      '....kbbwwbbk....',
+      '....kkkkkkkk....'
+    ]
+  };
+
+  // Los emojis que quedaban sueltos (partículas, botón del cerebrito, el
+  // diploma) ahora también tienen sprite propio: drawEmoji los intercambia
+  // solo, así no hay que tocar cada lugar que los dibuja.
+  var EMOJI_SPRITE_ALIASES = {
+    '❤️': 'heart',
+    '💗': 'heart',
+    '🔥': 'fire',
+    '💥': 'boom',
+    '🧠': 'brain',
+    '📜': 'diploma',
+    '⬆️': 'arrowUp',
+    '🏳️‍🌈': 'rainbowflag'
+  };
+
+  var pixelSpriteCache = {};
+  function getPixelSprite(name) {
+    if (pixelSpriteCache[name] !== undefined) return pixelSpriteCache[name];
+    var grid = PIXEL_SPRITE_GRIDS[name];
+    var palette = PIXEL_SPRITE_PALETTES[name];
+    if (!grid || !palette) {
+      pixelSpriteCache[name] = null;
+      return null;
+    }
+    var cols = 0;
+    for (var i = 0; i < grid.length; i++) cols = Math.max(cols, grid[i].length);
+    var off = document.createElement('canvas');
+    off.width = cols;
+    off.height = grid.length;
+    var octx = off.getContext('2d');
+    for (var row = 0; row < grid.length; row++) {
+      var line = grid[row];
+      for (var col = 0; col < line.length; col++) {
+        var color = palette[line[col]];
+        if (!color) continue;
+        octx.fillStyle = color;
+        octx.fillRect(col, row, 1, 1);
+      }
+    }
+    pixelSpriteCache[name] = off;
+    return off;
+  }
+
+  // El lado más largo ocupa "size" para que todos se vean del mismo porte
+  // sin deformar los que no son cuadrados (ej: el chocolate es apaisado).
+  function drawPixelSprite(sprite, x, y, size) {
+    var scale = size / Math.max(sprite.width, sprite.height);
+    var w = sprite.width * scale;
+    var h = sprite.height * scale;
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(sprite, x - w / 2, y - h / 2, w, h);
+    ctx.restore();
+  }
+
+  // Dibuja el objeto con su sprite propio; si a algún tipo todavía no se le
+  // hizo sprite, cae al emoji de ITEM_DEFS como antes.
+  function drawItemSprite(type, x, y, size) {
+    var sprite = getPixelSprite(type);
+    if (!sprite) {
+      drawEmoji(ITEM_DEFS[type].emoji, x, y, size);
+      return;
+    }
+    drawPixelSprite(sprite, x, y, size);
   }
 
   function drawCloud(c) {
@@ -3774,7 +4162,7 @@
       } else if (e.type === 'judge') {
         drawJudgeGavelIcon(e.x + wob, e.y, CONFIG.OBJECT_SIZE);
       } else {
-        drawEmoji(def.emoji, e.x + wob, e.y, CONFIG.OBJECT_SIZE);
+        drawItemSprite(e.type, e.x + wob, e.y, CONFIG.OBJECT_SIZE);
       }
     }
   }
