@@ -4,14 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Ruffus Adventures</title>
-<!-- Ícono para "Agregar a pantalla de inicio" en iPhone: la foto de Rufo
-     sobre el degradé de cielo del juego (ver icon-180.png). iOS ignora la
-     transparencia y recorta las esquinas, por eso el PNG ya viene cuadrado
-     y con fondo propio. -->
-<link rel="apple-touch-icon" href="icon-180.png">
-<link rel="icon" type="image/png" sizes="180x180" href="icon-180.png">
-<link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
-<link rel="manifest" href="manifest.json">
+<!-- Ícono para "Agregar a pantalla de inicio": la foto de Rufo sobre el
+     degradé de cielo del juego. Los PNG son opacos (sin canal alfa) y
+     cuadrados porque iOS compone la transparencia sobre negro y recorta
+     las esquinas. Van con ruta absoluta, tamaño declarado y ?v= para que
+     el iPhone no reuse el ícono viejo que tenía cacheado, más la variante
+     "precomposed" y el nombre /apple-touch-icon.png que iOS busca solo
+     cuando no encuentra (o no puede leer) los links de arriba. -->
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=3">
+<link rel="apple-touch-icon-precomposed" sizes="180x180" href="/apple-touch-icon.png?v=3">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=3">
+<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png?v=3">
+<link rel="manifest" href="/manifest.json?v=3">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
