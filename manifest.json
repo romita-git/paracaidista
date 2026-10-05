@@ -1,0 +1,15 @@
+{
+  "name": "Ruffus Adventures",
+  "short_name": "Ruffus",
+  "description": "Rufo en caída libre, tirolesa y globo.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#4fa8ff",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
